@@ -92,7 +92,6 @@ static const char *s_text;
 static void prepare_inline_image(void){}
 static bool test_check_cached;
 static unsigned test_button_draws,test_body_draws;
-static void draw_shelf_header_button(uint8_t *fb,EpdRect r,bool importing){(void)fb;assert(r.width==97&&r.height==54);assert(r.x==(importing?551:442));++test_button_draws;}
 static unsigned test_prepare_order,test_render_order,test_step;
 static void render(app_ctx_t *ctx,uint8_t *fb){(void)ctx;(void)fb;++test_body_draws;if(test_check_cached){assert(test_prepare_order);test_render_order=++test_step;}}
 static void prepare_covers(app_ctx_t *ctx){(void)ctx;++test_prepares;if(test_check_cached)test_prepare_order=++test_step;}
@@ -383,7 +382,7 @@ for path, name in (("main/ui/ui_kit.c", "ui_text_fixed_context_width_px"),
                    ("main/ui/ui_kit.c", "ui_text_fixed_context_vc"),
                    ("main/ui/ui_kit.c", "ui_text_fixed_vc")):
     status += function(path, name) + "\n"
-status += nav[nav.index('static bool s_status_reading;'):nav.index('static const char *const labels[]')]
+status += nav[nav.index('static bool s_status_reading;'):nav.index('static const char *const labels[')]
 for name in ('status_time','clock_text','ui_nav_status'):
     status += function('main/ui/ui_nav.c',name) + '\n'
 status += r'''
@@ -419,6 +418,7 @@ navigation = r'''
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include "main/assets/ui_icons.h"
 #include "main/ui/ui_nav_layout.h"
 typedef struct {int x,y,width,height;} EpdRect;
@@ -428,49 +428,108 @@ typedef struct {int x,y,width,height;} EpdRect;
 #define UI_GRAY_WHITE 255
 #define UI_GRAY_LIGHT 224
 #define EPD_DRAW_ALIGN_CENTER 1
-#define UI_NAV_TAB_ICON_PX 44
 enum {UI_CLICK_NAV};
-static void ui_click_feedback_register(uint8_t *fb,EpdRect r,int kind,ui_icon_t icon){(void)fb;(void)icon;assert(kind==UI_CLICK_NAV&&r.width==60&&r.height==60);}
-static const char *const labels[]={"首页","书架","文件管理","设置"};
+/* 毛玻璃胶囊逐像素作画，所以这里要一面真画布才能验色阶。 */
+/* The frosted pill paints per pixel, so this needs a real canvas to check the levels. */
+static uint8_t cells[UI_LOCK_HEIGHT][UI_LOCK_WIDTH];
+static int nav_boxes, texts, bands, first_ink;
+static void ui_click_feedback_register(uint8_t *fb,EpdRect r,int kind,ui_icon_t icon){
+ (void)fb;(void)icon;
+ assert(kind==UI_CLICK_NAV&&r.width==UI_NAV_ICON_BOX&&r.height==UI_NAV_ICON_BOX);
+ /* 图标盒必须整枚落在胶囊里，按压反馈才能在同一个盒子里放大和还原。 */
+ /* The icon box must sit inside the pill so press feedback zooms and restores within that same box. */
+ assert(r.y>=UI_NAV_TOP&&r.y+r.height<=UI_NAV_TOP+UI_NAV_DOCK_HEIGHT);
+ assert(r.x>=UI_NAV_DOCK_LEFT&&r.x+r.width<=UI_NAV_DOCK_LEFT+UI_NAV_DOCK_WIDTH);
+ ++nav_boxes;
+}
+static const char *const labels[UI_NAV_TABS]={"主页","书库","设置"};
 enum {APP_MAIN_REFRESH_NORMAL,APP_MAIN_REFRESH_FAST,APP_MAIN_REFRESH_WATER};
-static int main_choice;
-static int app_settings_main_refresh_mode(void){return main_choice;}
-static int first_ink, markers, tracks, texts, guards;
-static uint8_t ui_read_pixel(const uint8_t *fb,int x,int y){(void)fb;(void)x;(void)y;return 14;}
+static uint8_t ui_read_pixel(const uint8_t *fb,int x,int y){
+ (void)fb;
+ if(x<0||y<0||x>=UI_LOCK_WIDTH||y>=UI_LOCK_HEIGHT)return 15;
+ return cells[y][x];
+}
 static uint8_t ui_contrast_gray(uint8_t value){return value&240;}
-static void epd_draw_pixel(int x,int y,uint8_t value,uint8_t *fb){(void)x;(void)value;(void)fb;if(y<first_ink)first_ink=y;}
+static void put_cell(int x,int y,uint8_t value){
+ if(x<0||y<0||x>=UI_LOCK_WIDTH||y>=UI_LOCK_HEIGHT)return;
+ cells[y][x]=(uint8_t)(value>>4);
+}
+/* first_ink 只跟笔画：底栏整带刷白不算，否则量到的是留白不是胶囊。 */
+/* first_ink tracks glyph strokes only, not the band wipe, or it measures the blank gap. */
+static void epd_draw_pixel(int x,int y,uint8_t value,uint8_t *fb){
+ (void)fb;
+ if(x<0||y<0||x>=UI_LOCK_WIDTH||y>=UI_LOCK_HEIGHT)return;
+ if(y<first_ink)first_ink=y;
+ put_cell(x,y,value);
+}
 static void epd_fill_rect(EpdRect area,int gray,uint8_t *fb){
  (void)fb;
- if(area.y==UI_NAV_TOP+1){assert(area.height==5);if(gray==UI_GRAY_BLACK){assert(area.width==56);++markers;}
- else {assert(gray==UI_GRAY_WHITE&&area.width==UI_LOCK_WIDTH);++tracks;}}
- if(area.y==UI_NAV_REFRESH_END){assert(area.height==UI_NAV_TOP-UI_NAV_REFRESH_END&&area.width==UI_LOCK_WIDTH&&gray==0xf0);++guards;}
+ /* 底栏整带刷白，扫到屏幕下沿；单次32列对齐的刷新因此停在胶囊之上。 */
+ /* The band is wiped white down to the screen edge, so one 32-aligned refresh stops above the pill. */
+ if(area.x==0&&area.width==UI_LOCK_WIDTH&&area.y==UI_NAV_REFRESH_END){
+  assert(gray==UI_GRAY_WHITE&&area.y+area.height==UI_LOCK_HEIGHT);++bands;
+ }
+ for(int y=0;y<area.height;++y)for(int x=0;x<area.width;++x)
+  put_cell(area.x+x,area.y+y,(uint8_t)gray);
 }
-static void ui_hairline(uint8_t *fb,int y,int x,int width,int gray){(void)fb;(void)x;(void)width;(void)gray;assert(y==UI_NAV_TOP);}
-static void ui_text(uint8_t *fb,int x,int y,int px,const char *label,int align,bool wrap){(void)fb;(void)x;(void)label;(void)align;(void)wrap;assert(y==UI_NAV_TOP+74&&px==17);++texts;}
+static void ui_text(uint8_t *fb,int x,int y,int px,const char *label,int align,bool wrap){(void)fb;(void)x;(void)label;(void)align;(void)wrap;assert(y==UI_NAV_LABEL_TOP&&px==17);++texts;}
 '''
 navigation += 'static void ui_fill_rect_fast(EpdRect r,uint8_t gray,uint8_t *fb){epd_fill_rect(r,gray,fb);}'
 for path, name in (("main/ui/ui_kit.c", "icon_nibble"), ("main/ui/ui_kit.c", "ui_draw_icon"),
-                   ("main/ui/ui_nav.c", "icon"), ("main/ui/ui_nav.c", "ui_nav_draw"), ("main/ui/ui_nav.c", "ui_nav_hit")):
+                   ("main/ui/ui_nav.c", "dock_inside"), ("main/ui/ui_nav.c", "active_pill_inside"),
+                   ("main/ui/ui_nav.c", "frost_dock"), ("main/ui/ui_nav.c", "icon"),
+                   ("main/ui/ui_nav.c", "ui_nav_draw"), ("main/ui/ui_nav.c", "ui_nav_hit")):
     navigation += function(path, name) + "\n"
 navigation += r'''
 int main(void){
  uint8_t fb=0;
+ /* 胶囊 116..571 等分三格；两侧留白和导航带之外一律不响应。 */
+ /* The pill spans 116..571 in three cells; white on both sides and outside the band never responds. */
  for(int x=0;x<684;++x){
+   int expect=x<116||x>=571?-1:x<267?0:x<419?1:2;
    assert(ui_nav_hit(x,UI_NAV_TOUCH_TOP-1)==-1);
-   for(int y=UI_NAV_TOUCH_TOP;y<1216;++y)assert(ui_nav_hit(x,y)==x/171);
+   for(int y=UI_NAV_TOUCH_TOP;y<1216;++y)assert(ui_nav_hit(x,y)==expect);
    assert(ui_nav_hit(x,1216)==-1);
  }
  assert(ui_nav_hit(684,1141)==-1&&ui_nav_hit(UINT16_MAX,1141)==-1);
  assert(UI_NAV_TOUCH_TOP==1080&&UI_NAV_TOP==1096&&UI_NAV_REFRESH_END==1088);
- for(main_choice=0;main_choice<3;++main_choice)for(int active=0;active<4;++active){
-   first_ink=2000;markers=tracks=texts=guards=0;ui_nav_draw(&fb,active);
-   assert(markers==1&&texts==4&&tracks==(main_choice!=0)&&guards==1);
-   // 验证真实图标掩模的第一笔，单次刷新32列对齐后不能触碰图标。
-   // Check actual mask ink: the 32-column-expanded single update must not reach an icon.
-   assert(first_ink>=UI_NAV_MARKER_SCAN_END);
-   assert(UI_NAV_REFRESH_END%32==0&&UI_NAV_REFRESH_END<UI_NAV_TOP+1);
+ assert(ui_nav_cell_left(0)==116&&ui_nav_cell_right(0)==267);
+ assert(ui_nav_cell_left(1)==267&&ui_nav_cell_right(1)==419);
+ assert(ui_nav_cell_left(2)==419&&ui_nav_cell_right(2)==571);
+ /* 绘制和命中共用同一套格子边界，不能差一像素。 */
+ /* Painting and hit-testing share one cell definition and must not differ by a pixel. */
+ for(int x=0;x<684;++x)assert(ui_nav_cell_at(x)==(x<116||x>=571?-1:x<267?0:x<419?1:2));
+ for(int active=-1;active<UI_NAV_TABS;++active){
+   memset(cells,15,sizeof(cells));
+   first_ink=2000;nav_boxes=texts=bands=0;ui_nav_draw(&fb,active);
+   assert(nav_boxes==UI_NAV_TABS&&texts==UI_NAV_TABS&&bands==1);
+   /* 胶囊外的留白被清成白色，只有胶囊本身是玻璃。 */
+   /* Everything outside the pill is wiped white; only the pill is glass. */
+   for(int y=UI_NAV_REFRESH_END;y<UI_LOCK_HEIGHT;++y){
+     assert(cells[y][0]==15&&cells[y][UI_LOCK_WIDTH-1]==15);
+     if(y>=UI_NAV_TOP&&y<UI_NAV_TOP+UI_NAV_DOCK_HEIGHT)
+       assert(cells[y][UI_NAV_DOCK_LEFT-1]==15&&cells[y][UI_NAV_DOCK_LEFT+UI_NAV_DOCK_WIDTH]==15);
+   }
+   /* 白底玻璃的色阶：未选中格 20% 墨、选中格 40% 墨，落在面板的 0xc0 / 0x90。 */
+   /* Glass over white: 20% ink on idle cells and 40% on the selected one, i.e. this panel's 0xc0 / 0x90. */
+   for(int i=0;i<UI_NAV_TABS;++i){
+     const int cx=(ui_nav_cell_left(i)+ui_nav_cell_right(i))/2;
+     const int y=UI_NAV_TOP+8; /* 图标之上、胶囊顶边之下 / above the glyph, below the pill edge */
+     assert(cells[y][cx]==(i==active?UI_NAV_DOCK_ACTIVE>>4:UI_NAV_DOCK_FILL>>4));
+   }
+   /* 胶囊的圆角是真的圆角：角上那一点必须还在白底上。 */
+   /* The pill is really rounded: its very corner stays on white. */
+   assert(cells[UI_NAV_TOP][UI_NAV_DOCK_LEFT]==15);
+   assert(cells[UI_NAV_TOP+UI_NAV_DOCK_HEIGHT-1][UI_NAV_DOCK_LEFT+UI_NAV_DOCK_WIDTH-1]==15);
+   assert(UI_NAV_DOCK_FILL>UI_NAV_DOCK_ACTIVE); /* 选中格更深 */
+   // 验证真实图标掩模的第一笔落在胶囊内，内容刷新止于胶囊之上。
+   // Check actual mask ink: it lands inside the pill while the content refresh stops above it.
+   assert(first_ink>=UI_NAV_TOP&&first_ink<UI_NAV_TOP+UI_NAV_DOCK_HEIGHT);
+   assert(UI_NAV_REFRESH_END%32==0&&UI_NAV_REFRESH_END<UI_NAV_TOP);
+   assert(UI_NAV_DOCK_LEFT+UI_NAV_DOCK_WIDTH<=UI_LOCK_WIDTH);
+   assert(UI_NAV_TOP+UI_NAV_DOCK_HEIGHT<=UI_LOCK_HEIGHT);
  }
- puts("PASS: aligned content refresh stops above marker and actual navigation masks; blank guard and production layout retained");
+ puts("PASS: three-cell frosted pill dock wipes the band white, paints rounded glass at 0xc0/0x90, shares hit and paint cell bounds, and keeps content refresh above the pill");
 }
 '''
 

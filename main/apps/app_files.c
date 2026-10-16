@@ -533,7 +533,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     ui_nav_status(fb);
     if (s_view == FILE_VIEW_RENAME) {
         render_rename(fb);
-        ui_nav_draw(fb, 2);
+        ui_nav_draw(fb, 1);
         return;
     }
     if (s_folder >= 0) {
@@ -654,7 +654,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, 342, 1030, 20, page, EPD_DRAW_ALIGN_CENTER, false);
         }
     }
-    ui_nav_draw(fb, 2);
+    ui_nav_draw(fb, 1);
 }
 
 static void on_enter(app_ctx_t *ctx) {

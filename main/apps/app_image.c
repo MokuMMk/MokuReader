@@ -181,7 +181,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text_vc(fb, 623, box.y + 42, 25, "›", EPD_DRAW_ALIGN_RIGHT, false);
     }
     if (s_message[0]) ui_text(fb, 36, 1035, 21, s_message, EPD_DRAW_ALIGN_LEFT, false);
-    ui_nav_draw(fb, 3);
+    ui_nav_draw(fb, 1);
 }
 
 static bool present(app_ctx_t *ctx, app_redraw_t redraw) {

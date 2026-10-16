@@ -101,6 +101,9 @@ extern "C" {
 /// 在现有画面上绘制半透明、轻度模糊的灰阶挡板。/ Draw a translucent, softly blurred grayscale guard over the existing image.
 void ui_draw_acrylic_guard(uint8_t *framebuffer, EpdRect rect);
 void ui_draw_frosted_pocket(uint8_t *framebuffer, EpdRect rect);
+/// 按逻辑坐标读回一帧里已有的灰阶（高四位），供毛玻璃取样。越界返回 0。
+/// Read back an existing gray level (high nibble) at logical coordinates for frosted sampling; out of range reads 0.
+uint8_t ui_read_pixel(const uint8_t *fb, int x, int y);
 
 /// 文字按「行的上沿」定位，基线由字号推出，调用处不用再算 ascender。
 /// Text is placed by the top of the line; the baseline comes from the size so callers skip the ascender.

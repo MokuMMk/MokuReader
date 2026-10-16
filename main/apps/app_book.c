@@ -250,6 +250,8 @@ static void shelf_category_remember(app_ctx_t *ctx);
 static void shelf_category_restore(app_ctx_t *ctx);
 static void shelf_categories_recount(void);
 static void draw_category_menu(uint8_t *fb);
+static void draw_shelf_page(app_ctx_t *ctx, uint8_t *fb);
+static void draw_import_menu(uint8_t *fb);
 static const char *shelf_category_name(int index);
 static bool shelf_category_matches(const char *path);
 static int shelf_category_add(const char *path);
@@ -531,7 +533,11 @@ static EpdRect progress_rect(void) {
     // The reader has no right-hand menu button; the footer spans the full content width.
     return (EpdRect){36, UI_BAR_TOP, UI_LOCK_WIDTH - 72, UI_BAR_H};
 }
-static int shelf_rows(void) { return s_view == SHELF && app_settings_shelf_style() == 5 ? 4 : BOOK_GRID_ROWS; }
+/// 导入是叠在书库上的弹窗，书库整页还在下面，所以几何、封面和命中都必须按书库页算。
+/// Import overlays the shelf with the shelf page still painted underneath, so geometry, covers and
+/// hit tests must all resolve as the shelf page rather than as a sub-page.
+static bool shelf_painted(void) { return s_view == SHELF || s_view == IMPORT; }
+static int shelf_rows(void) { return shelf_painted() && app_settings_shelf_style() == 5 ? 4 : BOOK_GRID_ROWS; }
 #define SHELF_BOOK_LIFT_PX 16
 #define SHELF_LIST_BOUNCE_PX 8
 #define SHELF_FAST_COVER_WIDTH 164
@@ -579,18 +585,18 @@ static void draw_shelf_guard(uint8_t *fb,EpdRect rect,int slot) {
     } else for(int y=0;y<p.height;++y)memcpy(fb+(size_t)(p.y+y)*stride+p.x/2,output+(size_t)y*span,span);
 }
 static EpdRect row_rect(int row) {
-    if (s_view == SHELF && app_settings_shelf_style() == 5)
+    if (shelf_painted() && app_settings_shelf_style() == 5)
         return (EpdRect){36, 184 + row * 197, 612, 197};
     if (s_view != BULK) {
         int col = row % 3, line = row / 3;
         int cell = (ui_content_width() - 2 * UI_GAP) / 3;
-        return (EpdRect){UI_MARGIN + col * (cell + UI_GAP), (s_view == SHELF ? 192 : 224) + line * 282, cell, 260};
+        return (EpdRect){UI_MARGIN + col * (cell + UI_GAP), (shelf_painted() ? 192 : 224) + line * 282, cell, 260};
     }
     return (EpdRect){UI_MARGIN, 308 + row * (UI_BTN_H + UI_GAP), ui_content_width(), UI_BTN_H};
 }
 static EpdRect shelf_cover_image(int row) {
     EpdRect card = row_rect(row);
-    if (s_view != SHELF || app_settings_shelf_style() != 5)
+    if (!shelf_painted() || app_settings_shelf_style() != 5)
         return (EpdRect){card.x + (card.width - 164) / 2, card.y, 164, 214};
     // 列表所有封面统一尺寸；原图按比例铺满并居中裁切。/ Uniform list boxes use aspect fill and center crop.
     return (EpdRect){71, card.y + (197-156)/2, 120, 156};
@@ -772,7 +778,7 @@ static void prepare_covers(app_ctx_t* ctx) {
     for (int row = 0; row < rows; ++row) {
         int index = ctx->leaf * rows + row;
         EpdRect image = shelf_cover_image(row);
-        bool packed = s_view == SHELF && app_settings_main_fast_refresh();
+        bool packed = shelf_painted() && app_settings_main_fast_refresh();
         if (s_covers[row].index == index &&
             (packed ? fast_cover_matches(row, image) : s_covers[row].gray != NULL)) continue;
         if (s_covers[row].index == index && !s_covers[row].gray && !s_covers[row].fast_bits) continue;
@@ -891,8 +897,8 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
         // The cover buffer is 176x240 and this frame is 164x214; fill by the longer side and
         // centre-crop so the artwork is not squashed.
         const unsigned frame_width = (unsigned)image.width, frame_height = (unsigned)image.height;
-        unsigned sw = s_view == SHELF && app_settings_shelf_style() == 5 ? s_covers[row].width : BOOK_COVER_W;
-        unsigned sh = s_view == SHELF && app_settings_shelf_style() == 5 ? s_covers[row].height : BOOK_COVER_H;
+        unsigned sw = shelf_painted() && app_settings_shelf_style() == 5 ? s_covers[row].width : BOOK_COVER_W;
+        unsigned sh = shelf_painted() && app_settings_shelf_style() == 5 ? s_covers[row].height : BOOK_COVER_H;
         const book_crop_t crop = book_cover_crop(sw, sh, frame_width, frame_height);
         unsigned sample_x[SHELF_FAST_COVER_WIDTH];
         uint8_t tones[256];
@@ -921,7 +927,7 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
     ui_draw_round_rect(fb, image, 0, UI_GRAY_BLACK);
     if (favorite && image.width >= 28 && image.height >= 42) {
         draw_shelf_favorite_icon(fb, image.x + 10, image.y + 8, 24, 31,
-                                 artwork && ((app_settings_main_fast_refresh() && s_view == SHELF && fast_cover_matches(row, image))
+                                 artwork && ((app_settings_main_fast_refresh() && shelf_painted() && fast_cover_matches(row, image))
                                      ? s_covers[row].fast_white_edge : cover_favorite_needs_white_edge(s_covers[row].gray, image,
                                          app_settings_shelf_style() == 5 ? s_covers[row].width : BOOK_COVER_W,
                                          app_settings_shelf_style() == 5 ? s_covers[row].height : BOOK_COVER_H)));
@@ -986,7 +992,7 @@ static void draw_shelf_furniture(uint8_t* fb) {
     uint8_t style = app_settings_shelf_style();
     if (!style || style == 5) return;
     for (int row = 0; row < 3; ++row) {
-        int top = (s_view == SHELF ? 192 : 224) + row * 282;
+        int top = (shelf_painted() ? 192 : 224) + row * 282;
         if (style == 1) {
             ui_fill_rect_fast((EpdRect){36, top + 214, 612, 12}, 0x30, fb);
             ui_hairline(fb, top + 214, 36, 612, 0x58);
@@ -1013,15 +1019,31 @@ static int leaves(void) {
     int rows = s_view == BULK ? BOOK_BULK_ROWS : shelf_rows();
     return count ? 1 + (count - 1) / rows : 1;
 }
-static EpdRect shelf_manage_rect(void) { return (EpdRect){442, 94, 97, 54}; }
-static EpdRect shelf_import_rect(void) { return (EpdRect){551, 94, 97, 54}; }
-static void draw_shelf_header_button(uint8_t *fb, EpdRect r, bool importing) {
-    bool pressed = s_pressed_control == (importing ? 115 : 114);
-    ui_fill_round_rect(fb, r, 18, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, r, 18, 0x70);
-    if (pressed) ui_draw_pressed_round_rect(fb, r, 18);
-    ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2 + (pressed ? 2 : 0), 20,
-               importing ? "+ 导入" : "管理", EPD_DRAW_ALIGN_CENTER, false);
+// 设计稿书库题头：72px 大标题，右侧三枚 75px 半透明圆钮（管理 / 分类 / 导入）。
+// 状态栏墨迹到 y≈54，所以题头整体比设计稿再下移 16px，圆钮才不贴着状态栏。
+// Design library header: a 72 px title with three 75 px translucent circles on the right
+// (manage, category, import). The status bar inks down to y≈54, so the whole header sits 16 px
+// lower than the mock-up to keep the circles off it.
+#define SHELF_TITLE_X 63
+#define SHELF_TITLE_CENTER_Y 111
+#define SHELF_TITLE_PX 72
+#define SHELF_ACTION_SIDE 75
+#define SHELF_ACTION_ICON 50
+#define SHELF_ACTION_Y 74
+static EpdRect shelf_manage_rect(void) { return (EpdRect){346, SHELF_ACTION_Y + 1, SHELF_ACTION_SIDE, SHELF_ACTION_SIDE}; }
+static EpdRect shelf_category_rect(void) { return (EpdRect){449, SHELF_ACTION_Y, SHELF_ACTION_SIDE, SHELF_ACTION_SIDE}; }
+static EpdRect shelf_import_rect(void) { return (EpdRect){549, SHELF_ACTION_Y, SHELF_ACTION_SIDE, SHELF_ACTION_SIDE}; }
+static EpdRect shelf_title_rect(void) {
+    return (EpdRect){SHELF_TITLE_X, SHELF_TITLE_CENTER_Y - 53, shelf_manage_rect().x - SHELF_TITLE_X - 12, 106};
+}
+static void draw_shelf_action(uint8_t *fb, EpdRect r, ui_icon_t icon, int control) {
+    // 设计稿只有一层半透明圆底，没有描边；这一屏上 5% 几乎看不见，压到 0xd0 才看得出圆。
+    // The design gives one translucent disc and no outline; 5% is nearly invisible here, so 0xd0
+    // is what makes the circle read without a stroke.
+    bool pressed = s_pressed_control == control;
+    ui_fill_round_rect(fb, r, r.width / 2, pressed ? 0xa0 : 0xd0);
+    ui_draw_icon(fb, r.x + r.width / 2, r.y + r.height / 2 + (pressed ? 2 : 0),
+                 SHELF_ACTION_ICON, icon, UI_GRAY_BLACK);
 }
 static EpdRect shelf_page_arrow_rect(int direction) {
     return (EpdRect){direction < 0 ? 168 : 444, 1008, 72, 60};
@@ -1034,7 +1056,35 @@ static void draw_shelf_pager(uint8_t *fb, int count, int page, int pages) {
     ui_draw_icon(fb, 480, 1038, 28, UI_ICON_CHEVRON_RIGHT, page + 1 < pages ? 0 : 0x90);
 }
 static app_redraw_t shelf_turn_page(app_ctx_t *ctx, int direction);
-static EpdRect import_rect(int index) { return (EpdRect){36, 230 + index * 164, 612, 136}; }
+// 导入是设计稿的右上弹窗：304 宽、五行各 53，落在圆钮正下方。
+// 分类弹窗复用同一套圆角、留白、行高和图标尺寸，两个弹窗看起来是一套东西。
+// Import is the design's top-right popup: 304 wide with five 53 px rows under the header circle.
+// The category popup reuses the same radius, padding, row height and icon size so both read as one set.
+#define IMPORT_MENU_W 304
+// 右缘对齐自己的圆钮：圆钮一动，弹窗跟着走。
+// The right edge lines up with its own circle so the popup follows the button.
+#define IMPORT_MENU_LEFT (shelf_import_rect().x + SHELF_ACTION_SIDE - IMPORT_MENU_W)
+#define IMPORT_MENU_TOP SHELF_ACTION_Y
+#define IMPORT_ROW_H 53
+#define IMPORT_MENU_PAD_V 27
+#define IMPORT_MENU_PAD_H 25
+#define IMPORT_MENU_H (2 * IMPORT_MENU_PAD_V + 5 * IMPORT_ROW_H)
+#define IMPORT_MENU_RADIUS 37
+#define IMPORT_ROWS 5
+#define CATEGORY_MENU_W IMPORT_MENU_W
+#define CATEGORY_MENU_TOP IMPORT_MENU_TOP
+#define CATEGORY_MENU_PAD_V IMPORT_MENU_PAD_V
+#define CATEGORY_MENU_PAD_H IMPORT_MENU_PAD_H
+#define CATEGORY_MENU_RADIUS IMPORT_MENU_RADIUS
+#define CATEGORY_ROW_H IMPORT_ROW_H
+#define CATEGORY_MENU_FILL 0xf0
+#define CATEGORY_MENU_FRAME 0x70
+static EpdRect import_rect(int index) {
+    return (EpdRect){IMPORT_MENU_LEFT, IMPORT_MENU_TOP + IMPORT_MENU_PAD_V + index * IMPORT_ROW_H,
+                     IMPORT_MENU_W, IMPORT_ROW_H};
+}static EpdRect import_menu_rect(void) {
+    return (EpdRect){IMPORT_MENU_LEFT, IMPORT_MENU_TOP, IMPORT_MENU_W, IMPORT_MENU_H};
+}
 static void clean_filename(char *dst, size_t cap, const char *filename) {
     copy_text(dst, cap, filename);
     char *ext = strrchr(dst, '.');
@@ -1411,29 +1461,26 @@ static void draw_search(uint8_t* fb) {
     ui_draw_button(fb, (EpdRect){36, 392, 180, 66}, "清空", false);
     ui_keyboard_draw(fb, 560);
 }
-static void draw_import(uint8_t* fb) {
-    ui_clear_page(fb);
-    ui_nav_status(fb);
-    ui_nav_back(fb, 36, 79);
-    ui_text_vc(fb, 342, 107, 34, "导入图书", EPD_DRAW_ALIGN_CENTER, false);
-    ui_text(fb, 36, 166, 20, "选择导入方式", EPD_DRAW_ALIGN_LEFT, false);
-    ui_hairline(fb, 207, 36, 612, UI_GRAY_LIGHT);
-    static const char *titles[] = {"浏览 TF 卡", "WiFi 传书", "热点传书", "USB 读卡"};
-    static const char *details[] = {
-        "查看目录，打开或管理已有图书", "手机与墨水屏连接同一网络",
-        "连接 kiikoread 热点后上传图书", "连接电脑，把图书放入 books 文件夹"
+static void draw_import_menu(uint8_t* fb) {
+    const EpdRect menu = import_menu_rect();
+    ui_fill_round_rect(fb, menu, IMPORT_MENU_RADIUS, 0xf0);
+    ui_draw_control_frame(fb, menu, IMPORT_MENU_RADIUS, 0x70);
+    static const ui_icon_t icons[IMPORT_ROWS] = {
+        UI_ICON_FILE, UI_ICON_WIFI, UI_ICON_LINK, UI_ICON_USB, UI_ICON_CLOUD_DOWNLOAD
     };
-    for (int i = 0; i < 4; ++i) {
-        EpdRect r = import_rect(i);
-        ui_fill_round_rect(fb, r, 22, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, r, 22, 0xb0);
-        ui_text(fb, r.x + 24, r.y + 25, 27, titles[i], EPD_DRAW_ALIGN_LEFT, false);
-        ui_text(fb, r.x + 24, r.y + 78, 19, details[i], EPD_DRAW_ALIGN_LEFT, false);
-        ui_text_vc(fb, r.x + r.width - 24, r.y + r.height / 2, 26, "›", EPD_DRAW_ALIGN_RIGHT, false);
+    static const char *const titles[IMPORT_ROWS] = {
+        "在文件管理选择", "wifi传书", "热点传书", "usb读卡", "从云服务传输"
+    };
+    for (int i = 0; i < IMPORT_ROWS; ++i) {
+        const EpdRect r = import_rect(i);
+        // 云传输还没有对应功能：保留设计稿这一行，但画成浅灰且不响应点击。
+        // Cloud transfer has no counterpart yet: keep the design's row, drawn light and inert.
+        const bool enabled = i < IMPORT_ROWS - 1;
+        const uint8_t ink = enabled ? UI_GRAY_BLACK : 0x90;
+        ui_draw_icon(fb, r.x + 25 + 17, r.y + r.height / 2, 34, icons[i], ink);
+        if (enabled) ui_text_fixed_vc(fb, r.x + 25 + 34 + 18, r.y + r.height / 2, 28, titles[i], EPD_DRAW_ALIGN_LEFT, false);
+        else ui_text_fixed_ink_vc(fb, r.x + 25 + 34 + 18, r.y + r.height / 2, 28, titles[i], EPD_DRAW_ALIGN_LEFT, ink);
     }
-    ui_text(fb, 36, 925, 19, "图书放入 TF 卡的 books 文件夹后会自动出现在书架。",
-            EPD_DRAW_ALIGN_LEFT, false);
-    ui_nav_draw(fb, 1);
 }
 static void draw_batch_confirmation(uint8_t* fb) {
     if (!s_batch_confirm) return;
@@ -2986,7 +3033,6 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_text_set_system_scale(s_view != READING);
     if (s_view == EDIT) { draw_editor(fb); unlock_draw(); return; }
     if (s_view == SEARCH) { draw_search(fb); unlock_draw(); return; }
-    if (s_view == IMPORT) { draw_import(fb); unlock_draw(); return; }
     if (s_view == BULK) { draw_bulk(fb, ctx->leaf); unlock_draw(); return; }
     if (s_view == MANAGE) {
         ui_clear_page(fb);
@@ -3011,6 +3057,13 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         unlock_draw();
         return;
     }
+    // 导入是书库上的弹窗，所以先把书库整页画出来再叠菜单。
+    // Import overlays the shelf, so the shelf page is painted first and the menu goes on top.
+    draw_shelf_page(ctx, fb);
+    if (s_view == IMPORT) draw_import_menu(fb);
+    unlock_draw();
+}
+static void draw_shelf_page(app_ctx_t* ctx, uint8_t* fb) {
     ui_clear_page(fb);
     // 普通和水波纹共享灰阶画面，只有快刷使用黑白底色。
     // Normal and ripple share gray artwork; only fast refresh uses the BW background.
@@ -3018,14 +3071,16 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
                   app_settings_main_fast_refresh() ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     char category_title[BOOK_STORE_PATH_MAX];
-    copy_text(category_title,sizeof(category_title),s_category_selected ? shelf_category_name(s_category_selected) : "书架");
-    fit_text(category_title,52,326);
-    ui_text(fb, 36, 90, 52, category_title, EPD_DRAW_ALIGN_LEFT, false);
-    int title_width=ui_text_fixed_width_px(ui_text_effective_px(52),category_title);
-    ui_draw_icon(fb,36+title_width+27,120,26,
-                 s_category_menu ? UI_ICON_CHEVRON_UP : UI_ICON_CHEVRON_DOWN,UI_GRAY_BLACK);
-    draw_shelf_header_button(fb, shelf_manage_rect(), false);
-    draw_shelf_header_button(fb, shelf_import_rect(), true);
+    copy_text(category_title,sizeof(category_title),s_category_selected ? shelf_category_name(s_category_selected) : "书库");
+    fit_text(category_title,SHELF_TITLE_PX,shelf_title_rect().width);
+    ui_text_title_vc(fb, SHELF_TITLE_X, SHELF_TITLE_CENTER_Y, SHELF_TITLE_PX, category_title,
+                     category_title, EPD_DRAW_ALIGN_LEFT);
+    // 分类不再是标题旁的小箭头：它有自己的圆钮，两个弹窗都从圆钮展开。
+    // Category is no longer a chevron beside the title: it has its own circle, and both popups drop
+    // from their circle.
+    draw_shelf_action(fb, shelf_manage_rect(), UI_ICON_SQUARE_MENU, 114);
+    draw_shelf_action(fb, shelf_category_rect(), UI_ICON_TEXT_ALIGN_START, 118);
+    draw_shelf_action(fb, shelf_import_rect(), UI_ICON_ARROW_DOWN_TO_LINE, 115);
     if (s_message[0] || s_shelf_warning[0])
         ui_text(fb, UI_MARGIN, 991, 17, s_message[0] ? s_message : s_shelf_warning,
                 EPD_DRAW_ALIGN_LEFT, false);
@@ -3861,40 +3916,53 @@ static int shelf_category_available(void) {
     for (int i=0;i<s_category_count;++i) if (s_categories[i].available) ++count;
     return count;
 }
-static EpdRect shelf_category_box(void) {
+static int category_rows_visible(void) {
     int count=shelf_category_available()-s_category_menu_page*SHELF_CATEGORY_ROWS;
     if (count>SHELF_CATEGORY_ROWS) count=SHELF_CATEGORY_ROWS;
-    if (count<1) count=1;
-    return (EpdRect){36,158,400,16+count*83+(shelf_category_available()>SHELF_CATEGORY_ROWS ? 56 : 0)};
+    return count<1 ? 1 : count;
+}
+static EpdRect shelf_category_box(void) {
+    const int rows=category_rows_visible()+(shelf_category_available()>SHELF_CATEGORY_ROWS ? 1 : 0);
+    int left=shelf_category_rect().x+SHELF_ACTION_SIDE-CATEGORY_MENU_W;
+    if (left<8) left=8;
+    return (EpdRect){left,CATEGORY_MENU_TOP,CATEGORY_MENU_W,2*CATEGORY_MENU_PAD_V+rows*CATEGORY_ROW_H};
+}
+static EpdRect category_row_rect(int row) {
+    const EpdRect box=shelf_category_box();
+    return (EpdRect){box.x,box.y+CATEGORY_MENU_PAD_V+row*CATEGORY_ROW_H,box.width,CATEGORY_ROW_H};
 }
 static void draw_category_menu(uint8_t *fb) {
-    EpdRect box=shelf_category_box();
-    ui_fill_round_rect(fb,box,23,UI_GRAY_WHITE);
-    ui_draw_control_frame(fb,box,23,0x50);
-    for (int row=0;row<SHELF_CATEGORY_ROWS;++row) {
+    const EpdRect box=shelf_category_box();
+    ui_fill_round_rect(fb,box,CATEGORY_MENU_RADIUS,CATEGORY_MENU_FILL);
+    ui_draw_control_frame(fb,box,CATEGORY_MENU_RADIUS,CATEGORY_MENU_FRAME);
+    const int visible=category_rows_visible();
+    for (int row=0;row<visible;++row) {
         int index=shelf_category_at(s_category_menu_page*SHELF_CATEGORY_ROWS+row);
         if (index<0) break;
-        int y=box.y+8+row*83;
-        bool selected=index==s_category_selected;
-        if (selected) ui_fill_round_rect(fb,(EpdRect){box.x+8,y,box.width-16,79},16,0xd0);
-        ui_draw_icon(fb,box.x+35,y+40,27,index<2 ? UI_ICON_LIBRARY_BIG : UI_ICON_FOLDER_OPEN,UI_GRAY_BLACK);
+        const EpdRect r=category_row_rect(row);
+        const int center=r.y+r.height/2;
+        if (index==s_category_selected)
+            ui_fill_round_rect(fb,(EpdRect){r.x+CATEGORY_MENU_PAD_H/2,r.y+4,
+                                            r.width-CATEGORY_MENU_PAD_H,r.height-8},18,0xd0);
+        ui_draw_icon(fb,r.x+CATEGORY_MENU_PAD_H+17,center,34,
+                     index<2?UI_ICON_LIBRARY_BIG:UI_ICON_FOLDER_OPEN,UI_GRAY_BLACK);
         char name[BOOK_STORE_PATH_MAX],count[24];
         snprintf(count,sizeof(count),"%d",s_categories[index].count);
-        int name_width=290-ui_text_fixed_width_px(ui_text_effective_px(22),count);
-        if (name_width>228) name_width=228;
+        int name_width=CATEGORY_MENU_W-2*CATEGORY_MENU_PAD_H-34-18-64;
         if (name_width<60) name_width=60;
         copy_text(name,sizeof(name),shelf_category_name(index)); fit_text(name,28,name_width);
-        ui_text_vc(fb,box.x+62,y+40,28,name,EPD_DRAW_ALIGN_LEFT,false);
-        ui_text_vc(fb,box.x+box.width-38,y+40,22,count,EPD_DRAW_ALIGN_RIGHT,false);
-        if (selected) epd_fill_circle(box.x+box.width-20,y+40,4,UI_GRAY_BLACK,fb);
+        ui_text_fixed_vc(fb,r.x+CATEGORY_MENU_PAD_H+34+18,center,28,name,EPD_DRAW_ALIGN_LEFT,false);
+        ui_text_fixed_vc(fb,r.x+r.width-CATEGORY_MENU_PAD_H,center,22,count,EPD_DRAW_ALIGN_RIGHT,false);
     }
     if (shelf_category_available()>SHELF_CATEGORY_ROWS) {
-        int y=box.y+box.height-28;
-        ui_draw_icon(fb,box.x+48,y,28,UI_ICON_CHEVRON_LEFT,s_category_menu_page ? 0 : 0x90);
+        const EpdRect r=category_row_rect(visible);
+        const int center=r.y+r.height/2;
         char pages[24]; snprintf(pages,sizeof(pages),"%d / %d",s_category_menu_page+1,
             (shelf_category_available()+SHELF_CATEGORY_ROWS-1)/SHELF_CATEGORY_ROWS);
-        ui_text_vc(fb,box.x+box.width/2,y,22,pages,EPD_DRAW_ALIGN_CENTER,false);
-        ui_draw_icon(fb,box.x+box.width-48,y,28,UI_ICON_CHEVRON_RIGHT,0);
+        ui_draw_icon(fb,r.x+CATEGORY_MENU_PAD_H+17,center,28,UI_ICON_CHEVRON_LEFT,
+                     s_category_menu_page ? UI_GRAY_BLACK : 0x90);
+        ui_text_fixed_vc(fb,r.x+r.width/2,center,22,pages,EPD_DRAW_ALIGN_CENTER,false);
+        ui_draw_icon(fb,r.x+r.width-CATEGORY_MENU_PAD_H-14,center,28,UI_ICON_CHEVRON_RIGHT,UI_GRAY_BLACK);
     }
 }
 static bool shelf_matches(const shelf_entry_t* item) {
@@ -3934,11 +4002,13 @@ static app_redraw_t shelf_category_gesture(app_ctx_t *ctx, const ui_gesture_even
         int pages=(shelf_category_available()+SHELF_CATEGORY_ROWS-1)/SHELF_CATEGORY_ROWS;
         int direction=ev->type==UI_GESTURE_SWIPE_U ? 1 : ev->type==UI_GESTURE_SWIPE_D ? -1 : 0;
         if (!direction && ui_rect_hit(previous,ev->x0,ev->y0)) {
-            int row=((int)ev->y0-previous.y-8)/83;
-            bool footer=pages>1 && ev->y0>=previous.y+previous.height-56;
+            const int visible=category_rows_visible();
+            const int first=previous.y+CATEGORY_MENU_PAD_V;
+            const int row=((int)ev->y0-first)/CATEGORY_ROW_H;
+            bool footer=pages>1 && ev->y0>=first+visible*CATEGORY_ROW_H;
             if (footer) direction=ev->x0<previous.x+previous.width/2 ? -1 : 1;
             else {
-                int index=ev->y0>=previous.y+8 && row<SHELF_CATEGORY_ROWS
+                int index=ev->y0>=first && row<visible
                     ? shelf_category_at(s_category_menu_page*SHELF_CATEGORY_ROWS+row) : -1;
                 if (index>=0) {
                     shelf_category_remember(ctx); s_category_selected=index;
@@ -3954,8 +4024,12 @@ static app_redraw_t shelf_category_gesture(app_ctx_t *ctx, const ui_gesture_even
         }
     }
     EpdRect next=shelf_category_box();
-    int bottom=previous.y+previous.height>next.y+next.height ? previous.y+previous.height : next.y+next.height;
-    s_area=(EpdRect){24,79,424,bottom-79+4}; s_mode=MODE_GL16;
+    // 弹窗可能换页后变高变矮，刷新区取新旧并集再外扩 4px。
+    // A page change alters the box height, so refresh the union of both boxes plus 4 px.
+    int left=previous.x<next.x?previous.x:next.x, top=previous.y<next.y?previous.y:next.y;
+    int right=previous.x+previous.width>next.x+next.width?previous.x+previous.width:next.x+next.width;
+    int bottom=previous.y+previous.height>next.y+next.height?previous.y+previous.height:next.y+next.height;
+    s_area=(EpdRect){left-4,top-4,right-left+8,bottom-top+8}; s_mode=MODE_GL16;
     render(ctx,ctx->fb);
     return APP_REDRAW_AREA;
 }
@@ -5183,7 +5257,9 @@ static app_redraw_t manage_action(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (!s_clear_confirm && !s_file_removed && ui_rect_hit((EpdRect){UI_MARGIN, manage_panel().y + manage_panel().height - 190, ui_content_width(), 68}, x, y)) {
         extern void app_files_request_folder(int folder);
         app_files_request_folder(0);
-        ui_nav_request(ctx, 2);
+        // 文件管理不在三格底栏里，直接请求那一页。
+        // Files is not one of the three dock tabs, so request that page directly.
+        ctx->request_app = app_files_page();
         return APP_REDRAW_NONE;
     }
     int count = s_clear_confirm || s_file_removed ? 2 : 3;
@@ -5397,14 +5473,19 @@ static int bulk_control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect
 static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
     if (s_view == BULK) return bulk_action(ctx, x, y);
     if (s_view == IMPORT) {
-        if (y < 160 && x < 120) { s_view = SHELF; return APP_REDRAW_PAGE; }
+        // 弹窗只有五行；点菜单外任意处收起，回到书库。
+        // The popup holds five rows; a tap anywhere outside closes it back to the shelf.
+        if (!ui_rect_hit(import_menu_rect(), x, y)) { s_view = SHELF; return APP_REDRAW_PAGE; }
         int tab = ui_nav_hit(x, y);
-        if (tab == 1) { s_view = SHELF; return APP_REDRAW_PAGE; }
         if (tab >= 0) { ui_nav_request(ctx, tab); return APP_REDRAW_NONE; }
-        for (int i = 0; i < 4; ++i) if (ui_rect_hit(import_rect(i), x, y)) {
+        for (int i = 0; i < IMPORT_ROWS; ++i) if (ui_rect_hit(import_rect(i), x, y)) {
+            // 最后一行是设计稿的云传输，功能还没有，点它只收起菜单。
+            // The last row is the design's cloud transfer with no counterpart yet; it only closes the menu.
+            if (i >= IMPORT_ROWS - 1) { s_view = SHELF; return APP_REDRAW_PAGE; }
             if (i == 0) {
-                extern const app_desc_t app_files;
-                ctx->request_app = &app_files;
+                // 直接进文件管理根目录，让用户挑书。
+                // Open the file manager at its root so the user can pick a book.
+                ctx->request_app = app_files_page();
             } else {
                 extern const app_desc_t app_transfer;
                 if (i == 1) app_transfer_request_wifi_upload();
@@ -5522,6 +5603,10 @@ static app_redraw_t action_at(app_ctx_t* ctx, uint16_t x, uint16_t y) {
         }
         if (s_view == SHELF && ui_rect_hit(shelf_import_rect(), x, y)) {
             s_view = IMPORT;
+            return APP_REDRAW_PAGE;
+        }
+        if (s_view == SHELF && ui_rect_hit(shelf_category_rect(), x, y)) {
+            s_category_menu = !s_category_menu;
             return APP_REDRAW_PAGE;
         }
         if (s_view == SHELF && ui_rect_hit(shelf_manage_rect(), x, y)) {
@@ -5692,21 +5777,19 @@ static void book_on_media_ready(app_ctx_t* ctx) {
 }
 // 控件编号仅用于保持按下与抬起命中同一个目标。/ IDs pair a press with release on the same control.
 static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
-    if (s_view==SHELF && (s_category_menu || ui_rect_hit((EpdRect){24,79,388,74},x,y))) return -1;
+    if (s_view==SHELF && s_category_menu) return -1;
     if (s_view == BULK) return bulk_control_at(ctx, x, y, rect);
     if (s_view == MANAGE) {
         *rect = manage_back_rect();
         if (ui_rect_hit(*rect, x, y)) return 711;
     }
     if (s_view == IMPORT) {
-        *rect = (EpdRect){36, 79, 58, 58};
-        if (ui_rect_hit(*rect, x, y)) return 700;
-        for (int i = 0; i < 4; ++i) {
+        *rect = import_menu_rect();
+        if (!ui_rect_hit(*rect, x, y)) return -1;
+        for (int i = 0; i < IMPORT_ROWS; ++i) {
             *rect = import_rect(i);
-            if (ui_rect_hit(*rect, x, y)) return 701 + i;
+            if (ui_rect_hit(*rect, x, y)) return i >= IMPORT_ROWS - 1 ? -1 : 701 + i;
         }
-        int tab = ui_nav_hit(x, y);
-        if (tab >= 0) { *rect = (EpdRect){tab * 171, UI_NAV_TOP, 171, 120}; return 705 + tab; }
         return -1;
     }
     if (s_view == SEARCH) {
@@ -5746,6 +5829,7 @@ static int control_at(app_ctx_t* ctx, uint16_t x, uint16_t y, EpdRect* rect) {
         if (ui_rect_hit(*rect, x, y)) return 100 + i;
     }
     if (s_view == SHELF && ui_rect_hit(shelf_manage_rect(), x, y)) { *rect = shelf_manage_rect(); return 114; }
+    if (s_view == SHELF && ui_rect_hit(shelf_category_rect(), x, y)) { *rect = shelf_category_rect(); return 118; }
     if (s_view == SHELF && ui_rect_hit(shelf_import_rect(), x, y)) { *rect = shelf_import_rect(); return 115; }
     if (s_view == SHELF) {
         for (int i = 0; i < 2; ++i) {
@@ -5775,10 +5859,13 @@ static app_redraw_t paint_control(app_ctx_t* ctx, EpdRect rect) {
     }
     // 小按钮反馈只重画按钮，不重新绘制全部封面；其余装饰沿用原绘制路径。
     // Repaint small header buttons alone rather than every cover; other decorations retain their path.
-    if (s_view == SHELF && !memcmp(&rect, &(EpdRect){442,94,97,54}, sizeof(rect)))
-        draw_shelf_header_button(ctx->fb, rect, false);
-    else if (s_view == SHELF && !memcmp(&rect, &(EpdRect){551,94,97,54}, sizeof(rect)))
-        draw_shelf_header_button(ctx->fb, rect, true);
+    const EpdRect manage = shelf_manage_rect(), category = shelf_category_rect(), importing = shelf_import_rect();
+    if (s_view == SHELF && !memcmp(&rect, &manage, sizeof(rect)))
+        draw_shelf_action(ctx->fb, rect, UI_ICON_SQUARE_MENU, 114);
+    else if (s_view == SHELF && !memcmp(&rect, &category, sizeof(rect)))
+        draw_shelf_action(ctx->fb, rect, UI_ICON_TEXT_ALIGN_START, 118);
+    else if (s_view == SHELF && !memcmp(&rect, &importing, sizeof(rect)))
+        draw_shelf_action(ctx->fb, rect, UI_ICON_ARROW_DOWN_TO_LINE, 115);
     else render(ctx, ctx->fb);
     s_mode = MODE_DU;
     s_shelf_feedback_pending = false;
@@ -5824,7 +5911,7 @@ static int reader_swipe_direction(ui_gesture_type_t type, bool vertical) {
 }
 
 static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) {
-    if (s_view==SHELF && (s_category_menu || ui_rect_hit((EpdRect){24,79,388,74},ev->x0,ev->y0)))
+    if (s_view==SHELF && s_category_menu)
         return shelf_category_gesture(ctx,ev);
     if (s_view == READING && (s_reader_panel == READER_PANEL_BACKGROUND ||
         s_reader_panel == READER_PANEL_BACKGROUND_PREVIEW) &&
@@ -5977,7 +6064,11 @@ static app_redraw_t gesture_event(app_ctx_t* ctx, const ui_gesture_event_t* ev) 
             if (ctx->request_app || ctx->request_menu || ctx->request_return) return result;
             return result != APP_REDRAW_NONE ? result : paint_control(ctx, start_rect);
         }
-        if (start < 0 && end < 0 && s_view == READING && !s_clear_confirm)
+        // 阅读正文和导入弹窗都要收空白处的点击：前者用来呼出工具栏，后者用来收起菜单。
+        // 其他页面空白点击没有动作，保持原样。
+        // The reader body and the import popup both need blank-area taps: the former opens the toolbar,
+        // the latter dismisses the menu. Other pages keep their no-op blank taps.
+        if (start < 0 && end < 0 && (s_view == READING || s_view == IMPORT) && !s_clear_confirm)
             return action_at(ctx, ev->x0, ev->y0);
     }
     if (!s_clear_confirm && !s_scan_pending) {
@@ -6040,7 +6131,7 @@ static app_redraw_t on_key(app_ctx_t* ctx, int key) {
         return reader_key_action(ctx, app_settings_reader_key_action(key == UI_KEY_1 ? 0 : key == UI_KEY_2 ? 1 : 2));
     if (key == UI_KEY_2) {
         if (s_view == BULK) s_view = SHELF;
-        else if (s_view == SHELF) { ui_nav_request(ctx, 3); return APP_REDRAW_NONE; }
+        else if (s_view == SHELF) { ui_nav_request(ctx, 2); return APP_REDRAW_NONE; }
         else if (s_view == READING) {
             s_reader_slider = -1;
             s_reader_panel = s_reader_panel == READER_PANEL_TOOLS ? READER_PANEL_NONE : READER_PANEL_TOOLS;

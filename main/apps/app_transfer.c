@@ -254,7 +254,7 @@ static void draw_methods(uint8_t *fb) {
     }
     ui_text(fb, 42, 594, 19, "浏览器传书支持 EPUB、TXT、字体和图片文件。", EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 42, 634, 18, "传输完成后，新内容会自动出现在书架或字体列表。", EPD_DRAW_ALIGN_LEFT, false);
-    ui_nav_draw(fb, 2);
+    ui_nav_draw(fb, 1);
 }
 
 /* ---- 设备端配网 / Device provisioning ---- */
@@ -324,7 +324,7 @@ static void draw_networks(uint8_t* fb) {
         ui_text(fb, UI_MARGIN, 450, UI_PX_CAPTION, s_network_message, EPD_DRAW_ALIGN_LEFT, false);
         provisioning_button(fb, network_control_rect(11), "确认遗忘", 11);
         provisioning_button(fb, network_control_rect(12), "取消", 12);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 1);
         return;
     }
     transfer_header(fb, "无线网络", NULL);
@@ -395,7 +395,7 @@ static void draw_networks(uint8_t* fb) {
              s_status.network_ready ? "退出此页后，WiFi 仍保持连接。" : "连接后，可退出此页继续使用。");
     fit_label(message, 21, 600);
     ui_text(fb, 42, 1014, 21, message, EPD_DRAW_ALIGN_LEFT, false);
-    ui_nav_draw(fb, 3);
+    ui_nav_draw(fb, 1);
 }
 
 static void draw_password(uint8_t* fb) {
@@ -839,7 +839,7 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     ui_draw_button(fb, back,
                    s_mode == READ_PICO_TRANSFER_MODE_AP && s_status.state == READ_PICO_TRANSFER_ERROR && !s_status.network_ready
                        ? "重试热点传书" : "停止传输服务", false);
-    ui_nav_draw(fb, 2);
+    ui_nav_draw(fb, 1);
 }
 
 static void on_enter(app_ctx_t* ctx) {

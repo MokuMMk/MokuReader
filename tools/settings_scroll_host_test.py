@@ -58,6 +58,7 @@ enum EpdDrawMode {MODE_GC16,MODE_GL16,MODE_DU};
 #define UI_NAV_TOP 1096
 #define UI_NAV_REFRESH_END 1088
 #define UI_LOCK_WIDTH 684
+#define UI_LOCK_HEIGHT 1216
 #define SETTINGS_SCROLL_MAX 833
 static const int E0470_WAVEFORM=0,E0470_FOLLOW_WAVEFORM=1;
 static int s_page,s_main_scroll,s_ble_scroll,selected_mode,paint_mode;
@@ -103,7 +104,9 @@ int main(void){
   assert(feed(300,693,true,false,100)==APP_REDRAW_NONE&&s_main_scroll==0);
   assert(feed(300,692,true,false,110)==APP_REDRAW_AREA&&s_main_scroll==204);
   assert(pushes==before+1&&paints==pushes&&paint_mode==mode&&pushed_mode==MODE_GL16);
-  assert(pushed.y==160&&pushed.y+pushed.height==UI_NAV_REFRESH_END);
+  /* 主列表画到底栏底下，刷新区跟到屏幕下沿；二级页仍在 1088 收住。 */
+ /* The main list paints under the dock, so its refresh area reaches the screen edge; sub-pages still stop at 1088. */
+ assert(pushed.y==160&&pushed.y+pushed.height==UI_LOCK_HEIGHT);
   for(int i=1;i<=30;++i)assert(feed(300,692-i*10,true,false,110+i*10)==APP_REDRAW_NONE&&s_main_scroll==204);
   assert(feed(300,392,false,false,430)==APP_REDRAW_NONE&&s_main_scroll==204&&pushes==before+1&&row_taps==taps);
   for(int i=1;i<=30;++i)assert(feed(300,392,false,false,430+i*100)==APP_REDRAW_NONE&&s_main_scroll==204&&pushes==before+1);
@@ -137,7 +140,7 @@ int main(void){
  }
  s_page=SETTINGS_UPGRADE;assert(settings_present(&ctx,APP_REDRAW_AREA)&&pushed.y==468&&pushed.height==64);
  assert(!settings_present(&ctx,APP_REDRAW_NONE));
- puts("PASS: actual generic gestures + restored settings handler/presenter: all three modes use one discrete step and one changed-gray update per swipe; no tracking, momentum, motion ink, extra release/idle frames or periodic full flash; 1088 crop preserves chrome; selectors and OTA remain");
+ puts("PASS: actual generic gestures + restored settings handler/presenter: all three modes use one discrete step and one changed-gray update per swipe; no tracking, momentum, motion ink, extra release/idle frames or periodic full flash; the main-list crop reaching the screen edge preserves the frosted dock and sub-pages keep the 1088 crop; selectors and OTA remain");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='kiikoread-settings-rollback-') as directory:

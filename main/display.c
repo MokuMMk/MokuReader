@@ -122,9 +122,11 @@ static bool main_nav_geometry(void) {
 }
 
 static EpdRect main_body_area(void) {
-    // 内容截止到 y=1087，32列对齐也不能扩展到 y=1097 的小横条。
-    // Content ends at y=1087, so 32-column expansion cannot reach the marker at y=1097.
-    return (EpdRect){0, 0, epd_rotated_display_width(), UI_NAV_REFRESH_END};
+    // 胶囊底栏是动态的，整屏一起刷新：底栏和内容在同一次扫描里定稿，不会分两次刷。
+    // 1216 是 32 的整数倍，所以对齐扩展不会越出屏幕。
+    // The pill dock is dynamic and refreshes with the page: band and content settle in one scan
+    // instead of two. 1216 is a multiple of 32, so column alignment never runs past the screen.
+    return (EpdRect){0, 0, epd_rotated_display_width(), epd_rotated_display_height()};
 }
 
 static uint8_t main_bw_byte(uint8_t value) {
@@ -157,9 +159,12 @@ static void main_normalize_body(EpdiyHighlevelState* hl) {
 }
 
 static bool main_body_changed(EpdiyHighlevelState* hl) {
+    // 整屏比较：底栏变化也要算“这一页变了”，否则只换了胶囊却没有扫描去推它。
+    // Compare the whole screen: a band-only change must still count as a page change, or the pill
+    // would move without any scan driving it.
     const size_t stride = (size_t)epd_width() / 2;
     for (int y = 0; y < epd_height(); ++y)
-        if (memcmp(hl->front_fb + y * stride, hl->back_fb + y * stride, UI_NAV_REFRESH_END / 2)) return true;
+        if (memcmp(hl->front_fb + y * stride, hl->back_fb + y * stride, stride)) return true;
     return false;
 }
 
@@ -184,24 +189,13 @@ static void main_band_copy(EpdiyHighlevelState *hl, uint8_t *cache, bool restore
 }
 
 static void main_freeze_navigation(EpdiyHighlevelState* hl, bool update_marker) {
-    const size_t stride = (size_t)epd_width() / 2;
-    for (int y = 0; y < epd_height(); ++y) {
-        uint8_t* front = hl->front_fb + y * stride;
-        const uint8_t* back = hl->back_fb + y * stride;
-        if (!update_marker) {
-            memcpy(front + UI_NAV_REFRESH_END / 2, back + UI_NAV_REFRESH_END / 2,
-                   stride - UI_NAV_REFRESH_END / 2);
-            continue;
-        }
-        // 只保留目标横条的五行；起点为奇数像素，同行字节的分隔线半字节仍取真实 back。
-        // Keep only the five target marker rows; at the odd first pixel retain the neighboring divider nibble from actual back.
-        memcpy(front + UI_NAV_REFRESH_END / 2, back + UI_NAV_REFRESH_END / 2,
-               (UI_NAV_MARKER_TOP - UI_NAV_REFRESH_END) / 2);
-        const int first = UI_NAV_MARKER_TOP / 2;
-        front[first] = (front[first] & 0xf0) | (back[first] & 0x0f);
-        memcpy(front + UI_NAV_MARKER_BOTTOM / 2, back + UI_NAV_MARKER_BOTTOM / 2,
-               stride - UI_NAV_MARKER_BOTTOM / 2);
-    }
+    // 胶囊底栏不是固定图形：选中胶囊随页面移动，毛玻璃底还取决于它后面的内容。整条导航带因此
+    // 必须跟着刷新，不能再把上一帧的导航带盖回来——那会让胶囊一直停在上一个页面。
+    // The pill dock is not fixed artwork: the selected pill moves with the page and the frosted
+    // backdrop depends on what sits behind it. The whole navigation band must refresh, so the
+    // previous frame's band is no longer copied back, which used to pin the pill to the old page.
+    (void)hl;
+    (void)update_marker;
 }
 
 void display_main_transition_disarm(void) {
@@ -285,13 +279,7 @@ static bool main_begin(EpdiyHighlevelState* hl, enum EpdDrawError* result) {
     uint8_t *cache = fast && changed && s_main_band_count
         ? heap_caps_aligned_alloc(16, main_band_bytes(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) : NULL;
     const bool gray_fallback = water || (fast && changed && s_main_band_count && !cache);
-    // 黑白表的等灰迁移均不驱动；仅把有变化的横条并入同次扫描，固定图标保持原样。
-    // The BW/exit tables hold every equal pair. Include only the changing marker
-    // in this scan; frozen divider/labels/icons receive no drive. This removes
-    // an additional comparison and eight-frame serial marker update.
-    const bool marker_with_body=fast&&changed&&!cache&&!gray_fallback;
     EpdRect body_area=main_body_area();
-    if(marker_with_body)body_area.height=UI_NAV_MARKER_SCAN_END;
     if (cache) main_band_copy(hl, cache, false);
     const EpdWaveform* body_wave = normal ? display_main_normal_waveform() : gray_fallback ? display_main_gray_waveform()
         : shelf_exit ? display_main_shelf_exit_waveform() : display_main_bw_waveform();
@@ -355,15 +343,9 @@ static bool main_begin(EpdiyHighlevelState* hl, enum EpdDrawError* result) {
         }
     }
     s_main_band_count = 0;
-    if (*result == EPD_DRAW_SUCCESS && !marker_with_body) {
-        const EpdRect marker = {0, UI_NAV_MARKER_TOP, epd_rotated_display_width(),
-                               UI_NAV_MARKER_BOTTOM - UI_NAV_MARKER_TOP};
-        // 同页重绘横条无变化时 highlevel 自动跳过；32列扩展范围中其余像素来自 back，保持不驱动。
-        // Highlevel skips an unchanged marker; all other pixels in its expanded 32-column crop come from back and remain undriven.
-        epd_hl_waveform(hl, &E0470_FOLLOW_WAVEFORM);
-        use_scan_for(&E0470_FOLLOW_WAVEFORM, MODE_DU);
-        *result = epd_hl_update_area(hl, MODE_DU, 25, marker);
-    }
+    // 导航带已经并进上面那次整屏扫描，不再单独补一次，否则底栏和内容会分两次刷。
+    // The navigation band is part of the whole-screen scan above, so there is no separate pass;
+    // a second one would visibly refresh the dock after the rest of the page.
     if (*result != EPD_DRAW_SUCCESS) *result = main_recover(hl, *result);
     epd_hl_waveform(hl, &E0470_WAVEFORM);
     use_scan_for(&E0470_WAVEFORM, MODE_GL16);
@@ -407,8 +389,11 @@ static enum EpdDrawError hl_update(
         main_freeze_navigation(hl, false);
         if (app_settings_main_fast_refresh()) main_normalize_body(hl);
         clipped = *area;
-        if ((int64_t)clipped.y + clipped.height > UI_NAV_REFRESH_END)
-            clipped.height = UI_NAV_REFRESH_END - clipped.y;
+        // 整屏都是主页内容，所以局部更新可以一直到底；只挡住屏幕以外的部分。
+        // The whole screen is main-page content now, so a local update may reach the bottom; only
+        // anything outside the panel is dropped.
+        if ((int64_t)clipped.y + clipped.height > epd_rotated_display_height())
+            clipped.height = epd_rotated_display_height() - clipped.y;
         if (clipped.height <= 0) { display_main_transition_disarm(); return EPD_DRAW_SUCCESS; }
         area = &clipped;
         // 显式短局刷不被主页模式改写，猫眼/秒针在普通与水波纹中采用同一动效。

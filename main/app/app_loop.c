@@ -680,7 +680,7 @@ void app_loop_run(const app_loop_config_t* config) {
                 ctx.consumed = true;
                 ctx.user_activity = true;
                 nav_press_owned = true;
-                if (tab != app_index_of(current)) ui_nav_request(&ctx, tab);
+                if (app_tab_at(tab) != current) ui_nav_request(&ctx, tab);
             }
         }
         if (err == ESP_OK && pressed && touch.count == 1 && !power_input_owned &&

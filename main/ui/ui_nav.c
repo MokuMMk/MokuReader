@@ -2,8 +2,10 @@
  * SPDX-FileCopyrightText: 2026 mindreset
  * SPDX-License-Identifier: Apache-2.0
  *
- * 中文：绘制与命中四栏导航；细线图标分别表示首页、书架、文件和设置，图形来自 Lucide。
- * English: Draw and hit-test the four-tab navigation with thin-line home, books, files and settings icons from Lucide.
+ * 中文：绘制与命中设计稿的三格胶囊底栏；细线图标分别表示主页、书库和设置，图形来自 Lucide。
+ * English: Draw and hit-test the design's three-cell pill dock with thin-line home, library and settings icons from Lucide.
+ * 用户修订：底栏改成白底上浮起的一枚浅灰胶囊，选中格叠一层更深的胶囊；不再画通栏底色、分隔线和横条。
+ * User revision: the dock is now a light-gray pill floating on white with a darker pill on the selected cell; the full-width bar, rule and marker are gone.
  * 用户增加点击反馈：共享返回键和底栏图标登记局部命中，主循环只在按下和复位推该控件。
  * User adds click feedback: register local hits for shared backs and navigation icons; the loop presents only that control on press and restoration.
  * 用户修订：所有模式把内容扫描截止到分隔线之间的8行固定为白色留白；滚动不能把列表画进这条扫描保护带。
@@ -27,7 +29,6 @@
 
 // 底栏图标盒、返回键箭头、充电闪电的边长。
 // Box sizes for the bar icons, the back chevron and the charging bolt.
-#define UI_NAV_TAB_ICON_PX 44
 #define UI_NAV_BACK_ICON_PX 38
 #define UI_NAV_BOLT_ICON_PX 26
 #define UI_NAV_NETWORK_ICON_PX 28
@@ -102,7 +103,7 @@ static void status_fit_signature(char *text, int width) {
     }
 }
 
-static const char *const labels[] = {"首页", "书架", "文件管理", "设置"};
+static const char *const labels[UI_NAV_TABS] = {"主页", "书库", "设置"};
 
 void ui_nav_back(uint8_t *fb, int x, int y) {
     ui_click_feedback_register(fb, (EpdRect){x - 10, y + 3, 64, 64}, UI_CLICK_BACK_SMALL, UI_ICON_CHEVRON_LEFT);
@@ -120,32 +121,98 @@ void ui_nav_wifi_icon(uint8_t *fb, int cx, int cy, int size, uint8_t gray) {
     ui_draw_icon(fb, cx, cy, size, UI_ICON_WIFI, gray);
 }
 
-static void icon(uint8_t *fb, int tab, int cx, int y) {
-    // 四个底栏图标固定用 Lucide 细线原图，线宽与状态栏一致；y 是图标盒顶边。
-    // The four bar icons stay on upstream Lucide line art at the status-bar stroke weight; y is the box top.
-    static const ui_icon_t tabs[4] = {
-        UI_ICON_HOUSE, UI_ICON_LIBRARY_BIG,
-        UI_ICON_FOLDER_OPEN, UI_ICON_SLIDERS_HORIZONTAL,
+// 胶囊形状判定，圆角取四角圆弧；内部一律算在胶囊里。
+// Pill shape test: the four corner arcs, everything else counts as inside.
+static bool dock_inside(int x, int y) {
+    const int r = UI_NAV_DOCK_RADIUS;
+    const int dx = x < r ? r - x : x >= UI_NAV_DOCK_WIDTH - r ? x - (UI_NAV_DOCK_WIDTH - r - 1) : 0;
+    const int dy = y < r ? r - y : y >= UI_NAV_DOCK_HEIGHT - r ? y - (UI_NAV_DOCK_HEIGHT - r - 1) : 0;
+    return dx * dx + dy * dy <= r * r;
+}
+
+// 选中格的加深胶囊：格内再上下各收 6px、左右各收 3px，半径取半高得到跑道形。
+// The darker pill on the selected cell: 6 px inset top and bottom, 3 px left and right, with a
+// half-height radius for the stadium shape.
+static bool active_pill_inside(int x, int y, int active) {
+    if (active < 0 || active >= UI_NAV_TABS) return false;
+    const int left = ui_nav_cell_left(active) - UI_NAV_DOCK_LEFT + UI_NAV_CELL_PILL_INSET;
+    const int right = ui_nav_cell_right(active) - UI_NAV_DOCK_LEFT - UI_NAV_CELL_PILL_INSET;
+    const int top = UI_NAV_CELL_TOP - UI_NAV_TOP, bottom = top + UI_NAV_CELL_HEIGHT;
+    if (x < left || x >= right || y < top || y >= bottom) return false;
+    const int r = UI_NAV_CELL_HEIGHT / 2;
+    const int dx = x < left + r ? left + r - x : x >= right - r ? x - (right - r - 1) : 0;
+    const int dy = y < top + r ? top + r - y : y >= bottom - r ? y - (bottom - r - 1) : 0;
+    return dx * dx + dy * dy <= r * r;
+}
+
+// 半透明毛玻璃胶囊：把胶囊后面的画面做一次滚动窗口盒式模糊，再按透明度压墨。
+// 窗口只留模糊需要的 2R+1 行，所以不申请内存，也不随屏幕宽度增长。
+// The translucent frosted pill: box-blur what sits behind it through a rolling window, then lay ink
+// over it by opacity. The window keeps only the 2R+1 rows the blur needs, so nothing is allocated
+// and the cost does not grow with the screen width.
+static void frost_dock(uint8_t *fb, int active) {
+    const int w = UI_NAV_DOCK_WIDTH, h = UI_NAV_DOCK_HEIGHT;
+    // 快刷是黑白主页：不铺半透明底，只在选中格压一块实心黑，和原来固定底栏的黑横条同一种语言，
+    // 也绝不会把胶囊后面的内容盖成一片白。
+    // Fast mode is a black/white main page: lay no translucent fill and ink only the selected cell
+    // solid, the same language as the old fixed bar's black marker, and never white out what is behind.
+    if (app_settings_main_fast_refresh()) {
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x)
+                if (active_pill_inside(x, y, active))
+                    epd_draw_pixel(UI_NAV_DOCK_LEFT + x, UI_NAV_TOP + y, 0, fb);
+        return;
+    }
+    const int span = 2 * UI_NAV_FROST_RADIUS + 1;
+    static uint8_t window[2 * UI_NAV_FROST_RADIUS + 1][UI_NAV_DOCK_WIDTH];
+    for (int k = 0; k < span; ++k) {
+        int row = k - UI_NAV_FROST_RADIUS;
+        if (row < 0) row = 0; else if (row >= h) row = h - 1;
+        for (int x = 0; x < w; ++x)
+            window[k][x] = ui_read_pixel(fb, UI_NAV_DOCK_LEFT + x, UI_NAV_TOP + row);
+    }
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            if (!dock_inside(x, y)) continue;
+            int sum = 0;
+            for (int k = 0; k < span; ++k) sum += window[k][x];
+            const int blur = sum / span;
+            const int alpha = active_pill_inside(x, y, active) ? UI_NAV_FROST_ALPHA_ACTIVE : UI_NAV_FROST_ALPHA;
+            // ui_read_pixel 给的是高四位里的 0..15，epd_draw_pixel 要的是带高四位的 8 位灰。
+            // ui_read_pixel yields 0..15 from the high nibble; epd_draw_pixel wants the 8-bit form.
+            epd_draw_pixel(UI_NAV_DOCK_LEFT + x, UI_NAV_TOP + y,
+                           (uint8_t)(((blur * (100 - alpha) + 50) / 100) << 4), fb);
+        }
+        int next = y + UI_NAV_FROST_RADIUS + 1;
+        if (next >= h) next = h - 1;
+        uint8_t *slot = window[(y + UI_NAV_FROST_RADIUS) % span];
+        for (int x = 0; x < w; ++x)
+            slot[x] = ui_read_pixel(fb, UI_NAV_DOCK_LEFT + x, UI_NAV_TOP + next);
+    }
+}
+
+static void icon(uint8_t *fb, int tab, int cx, int cy) {
+    // 三格图标固定用 Lucide 细线原图，线宽与状态栏一致；cy 是图标盒中心。
+    // The three dock icons stay on upstream Lucide line art at the status-bar stroke weight; cy is the box centre.
+    static const ui_icon_t tabs[UI_NAV_TABS] = {
+        UI_ICON_HOUSE, UI_ICON_LIBRARY_BIG, UI_ICON_SLIDERS_HORIZONTAL,
     };
-    if (tab < 0 || tab >= 4) return;
-    ui_click_feedback_register(fb, (EpdRect){cx - 30, y - 12, 60, 60}, UI_CLICK_NAV, tabs[tab]);
-    ui_draw_icon(fb, cx, y + 18, UI_NAV_TAB_ICON_PX, tabs[tab], UI_GRAY_BLACK);
+    if (tab < 0 || tab >= UI_NAV_TABS) return;
+    ui_click_feedback_register(fb, (EpdRect){cx - UI_NAV_ICON_BOX / 2, cy - UI_NAV_ICON_BOX / 2,
+                                             UI_NAV_ICON_BOX, UI_NAV_ICON_BOX}, UI_CLICK_NAV, tabs[tab]);
+    ui_draw_icon(fb, cx, cy, UI_NAV_ICON_PX, tabs[tab], UI_GRAY_BLACK);
 }
 
 void ui_nav_draw(uint8_t *fb, int active) {
-    ui_fill_rect_fast((EpdRect){0, UI_NAV_TOP, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - UI_NAV_TOP}, 0xe0, fb);
-    ui_hairline(fb, UI_NAV_TOP, 0, UI_LOCK_WIDTH, UI_GRAY_LIGHT);
-    ui_fill_rect_fast((EpdRect){0, UI_NAV_REFRESH_END, UI_LOCK_WIDTH, UI_NAV_TOP - UI_NAV_REFRESH_END}, 0xf0, fb);
-    if (app_settings_main_refresh_mode() != APP_MAIN_REFRESH_NORMAL) {
-        // 快刷内容边界预留空白；横条在白底上单独短刷，图标和文字保持固定。
-        // Reserve a blank fast-refresh boundary; short-update the marker on white while retaining icons and text.
-        ui_fill_rect_fast((EpdRect){0, UI_NAV_MARKER_TOP, UI_LOCK_WIDTH, UI_NAV_MARKER_BOTTOM - UI_NAV_MARKER_TOP}, UI_GRAY_WHITE, fb);
-    }
-    for (int i = 0; i < 4; ++i) {
-        int center = (i * 2 + 1) * UI_LOCK_WIDTH / 8;
-        if (i == active) ui_fill_rect_fast((EpdRect){center - 28, UI_NAV_TOP + 1, 56, 5}, UI_GRAY_BLACK, fb);
-        icon(fb, i, center, UI_NAV_TOP + 27);
-        ui_text(fb, center, UI_NAV_TOP + 74, 17, labels[i], EPD_DRAW_ALIGN_CENTER, false);
+    // 设计稿底栏是浮在画面上的半透明毛玻璃胶囊：除了胶囊本身什么都不铺。
+    // 之前整带刷白会在胶囊后面留一条白条，也会把玻璃要模糊的内容擦掉。
+    // The dock is a translucent frosted pill floating over the page: nothing is laid down but the pill.
+    // Wiping the band used to leave a white bar behind the glass and erased the content it should blur.
+    frost_dock(fb, active);
+    for (int i = 0; i < UI_NAV_TABS; ++i) {
+        const int center = (ui_nav_cell_left(i) + ui_nav_cell_right(i)) / 2;
+        icon(fb, i, center, UI_NAV_ICON_CENTER_Y);
+        ui_text(fb, center, UI_NAV_LABEL_TOP, 17, labels[i], EPD_DRAW_ALIGN_CENTER, false);
     }
 }
 
@@ -232,11 +299,13 @@ void ui_nav_status(uint8_t *fb) {
 }
 
 int ui_nav_hit(uint16_t x, uint16_t y) {
-    if (x >= UI_LOCK_WIDTH || y < UI_NAV_TOUCH_TOP || y >= UI_LOCK_HEIGHT) return -1;
-    int tab = x * 4 / UI_LOCK_WIDTH;
-    return tab < 4 ? tab : -1;
+    // 只有胶囊本身可点：设计稿底栏两侧留白一直通到屏幕边。
+    // Only the pill is touchable: the design leaves white on both sides all the way to the screen edge.
+    if (y < UI_NAV_TOUCH_TOP || y >= UI_LOCK_HEIGHT) return -1;
+    return ui_nav_cell_at((int)x);
 }
 
 void ui_nav_request(app_ctx_t *ctx, int index) {
-    if (index >= 0 && index < 4) ctx->request_app = app_at(index);
+    const app_desc_t *page = app_tab_at(index);
+    if (page) ctx->request_app = page;
 }

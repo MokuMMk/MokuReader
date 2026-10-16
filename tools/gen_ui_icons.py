@@ -82,6 +82,15 @@ ICONS = (
     "cpu",               # BOOT 刷机 / boot flashing
     "book-open",         # 阅读设置 / reading settings
     "timer",             # 自动休眠 / idle lock
+    "square-menu",       # 书库题头·管理 / library header, manage
+    "arrow-down-to-line",# 书库题头·导入 / library header, import
+    "circle-check",      # 续读卡菜单·标记已读完 / resume card menu, mark finished
+    "trash",             # 续读卡菜单·从继续阅读移除 / resume card menu, remove
+    "ellipsis",          # 续读卡·更多 / resume card, more
+    "cloud",             # 续读卡·云端标记 / resume card, cloud mark
+    "link",              # 导入菜单·热点传书 / import menu, hotspot
+    "usb",               # 导入菜单·USB 读卡 / import menu, USB card
+    "cloud-download",    # 导入菜单·从云服务传输 / import menu, cloud transfer
 )
 
 _NUMBER = re.compile(r"[-+]?(?:\d*\.\d+|\d+\.?)(?:[eE][-+]?\d+)?")

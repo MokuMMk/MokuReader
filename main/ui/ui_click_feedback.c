@@ -67,8 +67,8 @@ bool ui_click_feedback_release(uint8_t *fb, EpdRect *area) {
 }
 bool ui_click_feedback_cancel_at(int x, int y) {
     bool outside = s_active.kind == UI_CLICK_NAV
-        ? x < 0 || x >= UI_LOCK_WIDTH || y < UI_NAV_TOUCH_TOP || y >= UI_LOCK_HEIGHT ||
-          x / (UI_LOCK_WIDTH / 4) != s_x / (UI_LOCK_WIDTH / 4)
+        ? y < UI_NAV_TOUCH_TOP || y >= UI_LOCK_HEIGHT ||
+          ui_nav_cell_at(x) != ui_nav_cell_at(s_x)
         : x < s_active.area.x || x >= s_active.area.x + s_active.area.width ||
           y < s_active.area.y || y >= s_active.area.y + s_active.area.height;
     return s_pixels && (outside ||
@@ -79,9 +79,11 @@ bool ui_click_feedback_press(uint8_t *fb, int x, int y, EpdRect *area) {
     if (s_pixels) return false;
     for (unsigned i = 0; i < s_count; ++i) {
         EpdRect r = s_controls[i].area;
+        // 底栏只有胶囊内的三格可点，所以格子外一律不命中。
+        // Only the three cells inside the pill are touchable, so anything outside them misses.
         bool hit = s_controls[i].kind == UI_CLICK_NAV
-            ? y >= UI_NAV_TOUCH_TOP && y < UI_LOCK_HEIGHT && x >= 0 && x < UI_LOCK_WIDTH &&
-              x / (UI_LOCK_WIDTH / 4) == (r.x + r.width / 2) / (UI_LOCK_WIDTH / 4)
+            ? y >= UI_NAV_TOUCH_TOP && y < UI_LOCK_HEIGHT &&
+              ui_nav_cell_at(x) == ui_nav_cell_at(r.x + r.width / 2)
             : x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height;
         if (!hit) continue;
         s_pixels = heap_caps_malloc((size_t)r.width * r.height, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
@@ -104,10 +106,11 @@ bool ui_click_feedback_press(uint8_t *fb, int x, int y, EpdRect *area) {
         } else {
             // 底栏始终保留原灰底，不把整个按压缓存转成黑白点阵。
             // Retain the original footer gray in every mode rather than binarizing the entire pressed cache.
-            // 放大笔画从32列对齐的横条扫描边界下方开始，避开横条及底部文字。
-            // Enlarged ink starts below the marker's aligned 32-column scan boundary, clear of its marker and labels.
-            epd_fill_rect((EpdRect){cx - 25, cy - 23, 50, 50}, s_pixels[0], fb);
-            ui_draw_icon(fb, cx, cy + 2, 50, s_active.icon, UI_GRAY_BLACK);
+            // 放大后的字形仍画在注册时的图标盒里，释放时才能按同一边界原样还原。
+            // The enlarged glyph stays inside the registered icon box so release restores that same area.
+            const int box = UI_NAV_ICON_BOX;
+            epd_fill_rect((EpdRect){cx - box / 2, cy - box / 2, box, box}, s_pixels[0], fb);
+            ui_draw_icon(fb, cx, cy, UI_NAV_ICON_PRESS_PX, s_active.icon, UI_GRAY_BLACK);
         }
         *area = changed_area(fb);
         return true;

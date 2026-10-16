@@ -118,33 +118,34 @@ int main(void){
   }
  }
  rotation=3;patterned();ui_click_feedback_begin(frame);
- ui_click_feedback_register(frame,(EpdRect){55,1111,60,60},UI_CLICK_NAV,UI_ICON_HOUSE);
- EpdRect r;assert(ui_click_feedback_press(frame,85,1188,&r));
- assert(!ui_click_feedback_cancel_at(90,1188)&&ui_click_feedback_cancel_at(258,1188));
+ ui_click_feedback_register(frame,(EpdRect){159,1106,64,64},UI_CLICK_NAV,UI_ICON_HOUSE);
+ EpdRect r;assert(ui_click_feedback_press(frame,191,1188,&r));
+ assert(!ui_click_feedback_cancel_at(196,1188)&&ui_click_feedback_cancel_at(343,1188));
  assert(ui_click_feedback_release(frame,&r)&&!memcmp(frame,saved,BYTES));
- assert(ui_click_feedback_press(frame,85,1188,&r));ui_click_feedback_begin(frame);assert(!live&&!ui_click_feedback_release(frame,&r));
- // 三种主页模式的底栏共用灰底：按压不能改外沿、文字、横条或相邻图标。
- // All three main modes share a gray footer: presses must preserve its perimeter, labels, marker and neighboring icons.
- static const ui_icon_t tabs[]={UI_ICON_HOUSE,UI_ICON_LIBRARY_BIG,UI_ICON_FOLDER_OPEN,UI_ICON_SLIDERS_HORIZONTAL};
- for(int tab=0;tab<4;++tab)for(int policy=0;policy<3;++policy)for(int edge=0;edge<2;++edge){
+ assert(ui_click_feedback_press(frame,191,1188,&r));ui_click_feedback_begin(frame);assert(!live&&!ui_click_feedback_release(frame,&r));
+ // 三格胶囊底栏共用灰底：按压不能改外沿、文字或相邻格子。
+ // All three main modes share the pill footer: presses must preserve its perimeter, labels and neighbouring cells.
+ static const ui_icon_t tabs[UI_NAV_TABS]={UI_ICON_HOUSE,UI_ICON_LIBRARY_BIG,UI_ICON_SLIDERS_HORIZONTAL};
+ for(int tab=0;tab<UI_NAV_TABS;++tab)for(int policy=0;policy<3;++policy)for(int edge=0;edge<2;++edge){
   fast=policy==1;memset(frame,0xee,BYTES);
-  int cx=(tab*2+1)*684/8;
-  epd_fill_rect((EpdRect){0,1097,684,5},0,frame);
+  int cx=(ui_nav_cell_left(tab)+ui_nav_cell_right(tab))/2;
   epd_fill_rect((EpdRect){0,1170,684,2},0x70,frame);
-  ui_draw_icon(frame,cx,1141,44,tabs[tab],0);
+  ui_draw_icon(frame,cx,UI_NAV_ICON_CENTER_Y,UI_NAV_ICON_PX,tabs[tab],0);
   memcpy(saved,frame,BYTES);ui_click_feedback_begin(frame);
-  ui_click_feedback_register(frame,(EpdRect){cx-30,1111,60,60},UI_CLICK_NAV,tabs[tab]);
+  ui_click_feedback_register(frame,(EpdRect){cx-UI_NAV_ICON_BOX/2,UI_NAV_ICON_CENTER_Y-UI_NAV_ICON_BOX/2,UI_NAV_ICON_BOX,UI_NAV_ICON_BOX},UI_CLICK_NAV,tabs[tab]);
   assert(!ui_click_feedback_press(frame,cx,UI_NAV_TOUCH_TOP-1,&r));
   assert(!ui_click_feedback_press(frame,cx,1216,&r));
-  assert(!ui_click_feedback_press(frame,-1,UI_NAV_TOUCH_TOP,&r));
-  assert(!ui_click_feedback_press(frame,684,UI_NAV_TOUCH_TOP,&r));
+  assert(!ui_click_feedback_press(frame,UI_NAV_DOCK_LEFT-1,UI_NAV_TOUCH_TOP,&r));
+  assert(!ui_click_feedback_press(frame,UI_NAV_DOCK_LEFT+UI_NAV_DOCK_WIDTH,UI_NAV_TOUCH_TOP,&r));
   assert(ui_click_feedback_press(frame,cx,edge?UI_NAV_TOUCH_TOP:1188,&r));
   assert(!ui_click_feedback_cancel_at(cx,edge?UI_NAV_TOUCH_TOP+12:1188));
   for(int y=0;y<1216;++y)for(int x=0;x<684;++x){
-   if(x<cx-25||x>=cx+25||y<1118||y>=1168)assert(pixel(frame,x,y)==pixel(saved,x,y));
+   if(x<cx-UI_NAV_ICON_BOX/2||x>=cx+UI_NAV_ICON_BOX/2||
+      y<UI_NAV_ICON_CENTER_Y-UI_NAV_ICON_BOX/2||y>=UI_NAV_ICON_CENTER_Y+UI_NAV_ICON_BOX/2)
+    assert(pixel(frame,x,y)==pixel(saved,x,y));
   }
   if(policy==0)memcpy(again,frame,BYTES);else assert(!memcmp(frame,again,BYTES));
-  assert(r.y>=UI_NAV_MARKER_SCAN_END&&r.y+r.height<=1170);
+  assert(r.y>=UI_NAV_TOP&&r.y+r.height<=UI_NAV_TOP+UI_NAV_DOCK_HEIGHT);
   EpdRect pressed=r;
   assert(ui_click_feedback_release(frame,&r)&&!memcmp(&r,&pressed,sizeof(r))&&!live&&!memcmp(frame,saved,BYTES));
  }

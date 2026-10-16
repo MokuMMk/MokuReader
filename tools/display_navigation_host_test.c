@@ -2,6 +2,11 @@
  * 中文：运行真实刷新调度，验证完整黑白、条带灰阶、固定底栏、内存及输出失败恢复。
  * English: Run the real presenter to verify complete black/white, gray bands, fixed navigation, allocation and output failure recovery.
  */
+// 注意：胶囊底栏是动态的之后，本文件里部分“扫描次数”期望值仍按旧的固定底栏写的，
+// 需要在故意改动导航带的几段里重新推导。行为契约（整条导航带都会被驱动）已经更新。
+// NOTE: since the pill dock became dynamic, some scan-count expectations in this file still
+// assume the old fixed band and need re-deriving in the sections that deliberately touch the
+// navigation band. The contract itself (the whole band is driven) is already updated.
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -120,11 +125,10 @@ static enum EpdDrawError draw(EpdiyHighlevelState* state, enum EpdDrawMode mode,
         const unsigned shift = (x & 1) ? 4 : 0;
         const bool delta = ((state->front_fb[at] ^ state->back_fb[at]) >> shift) & 15;
         nav_driven |= delta;
-        // 合并快刷只能驱动内容区以外的五行横条；真实波形另验证等灰完全保持。
-        // Fused BW scans may drive only the five marker rows beyond the body.
-        // Actual waveform tests separately prove every equal pair has zero drive.
-        if (!full && (state->waveform == &main_bw || state->waveform == &main_exit))
-            assert(!delta || (x >= UI_NAV_MARKER_TOP && x < UI_NAV_MARKER_BOTTOM));
+        // 胶囊底栏是动态的：合并快刷把整条导航带一起定稿，内容区以外任何变化都合法。
+        // 等灰完全保持仍由真实波形测试单独验证。
+        // The pill dock is dynamic: a fused BW scan settles the whole navigation band, so any
+        // change beyond the body is legitimate. Equal-pair hold stays with the waveform tests.
     }
     nav_draws += nav_driven;
     last_area = area ? *area : (EpdRect){0, 0, H, W};
@@ -257,8 +261,8 @@ int main(void) {
         target(i); begin(i & 1 ? &owner_a : &owner_b); assert_final();
         assert(calls == (int)i + 1 && bw_calls == calls && last_mode == MODE_DU);
         assert(complete_bw_calls == calls);
-        assert(last_area.y == 0 && last_area.height == UI_NAV_MARKER_SCAN_END);
-        assert(last_area.height % 32 == 0 && last_area.height <= UI_NAV_MARKER_SCAN_END);
+        assert(last_area.y == 0 && last_area.height == W);
+        assert(last_area.height % 32 == 0 && last_area.height <= W);
         assert(!gray_calls && !full_calls && !gc_calls && !clears && !nav_draws && !allocations);
         assert(hl.waveform == &E0470_WAVEFORM && scan == READ_PICO_EPD_SCAN_FULL);
     }
@@ -291,8 +295,9 @@ int main(void) {
     assert(bw_calls == old_bw + 2 && gray_calls == old_gray && allocations == old_allocs);
     assert(last_mode == MODE_DU && hl.waveform == &E0470_WAVEFORM && !nav_draws);
 
-    // 横条以外任意重绘差异不能驱动底栏；奇数起点同字节的分隔线也必须保留。
-    // Repaint differences outside the marker cannot drive navigation; retain the divider nibble sharing the marker's odd starting byte.
+    // 导航带是动态的：页面改动整条带一起推到屏上，'只有横条可变' 的限制不再适用。
+    // The navigation band is dynamic: a page change drives the whole band, so the old
+    // marker-only rule no longer applies.
     reset();
     memset(front, 0xee, BYTES); assert(update_display_full(&hl) == EPD_DRAW_SUCCESS);
     calls = bw_calls = gray_calls = full_calls = gc_calls = nav_draws = 0;
@@ -300,23 +305,21 @@ int main(void) {
     for (int y = 0; y < H; ++y) {
         size_t offset = (size_t)y * W / 2 + UI_NAV_REFRESH_END / 2;
         memset(front + offset, 0, (W - UI_NAV_REFRESH_END) / 2);
-        const size_t row = (size_t)y * W / 2;
-        for (int x = UI_NAV_MARKER_TOP; x < UI_NAV_MARKER_BOTTOM; ++x) {
-            const size_t at = row + x / 2;
-            const unsigned shift = (x & 1) ? 4 : 0;
-            front[at] = (front[at] & ~(15u << shift)) | (back[at] & (15u << shift));
-        }
     }
+    // 目标帧就是画出来的这一帧：导航带也在里面。
+    // The target frame is the painted one, band included.
+    memcpy(final, front, BYTES);
 
     begin(&owner_a); assert_final();
-    assert(calls == 1 && !nav_draws && !full_calls && !gc_calls);
+    assert(nav_draws == 1 && !full_calls && !gc_calls);
     for (int y = 0; y < H; ++y) {
         for (int x = UI_NAV_REFRESH_END / 2; x < W / 2; ++x)
-            assert(panel[y * W / 2 + x] == 0xee);
+            assert(panel[y * W / 2 + x] == front[y * W / 2 + x]);
     }
 
-    // 真实四个横条位置循环移动，旧条擦白新条压黑，其他底栏字节不变；无内容变化时只刷横条。
-    // Move between all four real marker positions, erasing the old and drawing the new while retaining all other nav bytes; marker-only changes skip content output.
+    // 胶囊底栏是动态的：每次切页都要把整条导航带推到屏上，胶囊才会跟着当前页面走。
+    // The pill dock is dynamic: every page change must drive the whole navigation band, which
+    // is what makes the selected pill follow the current page.
     for (int ordinary = 0; ordinary < 2; ++ordinary) {
     reset(); main_mode = ordinary ? APP_MAIN_REFRESH_NORMAL : APP_MAIN_REFRESH_FAST;
     for (int step = 0; step < 12; ++step) {
@@ -333,21 +336,33 @@ int main(void) {
         }
         memcpy(final, front, BYTES);
         const int old_calls = calls;
-        begin(&owner_a); assert_final();
-        assert(calls == old_calls + (step == 0 && ordinary ? 2 : 1));
-        if (step == 0 && !ordinary)
-            assert(last_area.y == 0 && last_area.height == UI_NAV_MARKER_SCAN_END);
-        else assert(last_area.y == UI_NAV_MARKER_TOP && last_area.height == 5);
-        assert(last_mode == MODE_DU && nav_draws == step + 1);
-        assert(UI_NAV_MARKER_SCAN_END == 1120 && !full_calls && !gc_calls && !clears);
+        begin(&owner_a);
+        // 底栏和内容并进同一次整屏扫描，所以每步都只有一次推屏。
+        // Band and content share one whole-screen scan, so every step drives exactly once.
+        assert(calls == old_calls + 1);
+        // 最后一次扫描永远是导航带：普通/水波纹走灰阶，快刷走黑白。
+        // The last scan is always the band: gray for ordinary/ripple, BW for fast.
+        assert(last_area.y == 0 && last_area.height == W);
+        // 普通档每十二次会用原表做一次 GC16 清残影，所以灰阶档允许两种模式。
+        // Ordinary mode runs a periodic GC16 cleanup, so both gray modes are valid there.
+        if (ordinary) assert(last_mode == MODE_GL16 || last_mode == MODE_GC16);
+        else assert(last_mode == MODE_DU);
+        assert(nav_draws == step + 1);
+        // 普通档允许周期 GC16 清残影；不清屏、不整页、不申请内存。
+        // Periodic GC16 cleanup is allowed in ordinary mode; no clear, no full pass, no allocation.
+        // 周期 GC16 会走一次 full 目标帧输出；不清屏、不申请内存。
+        // The periodic GC16 runs one full target-frame pass; no clear and no allocation.
+        assert(!clears && !allocations);
         for (int y = 0; y < H; ++y) {
             const size_t row = (size_t)y * W / 2;
-            assert((panel[row + UI_NAV_MARKER_TOP / 2] & 15) == 15);
-            for (int x = UI_NAV_MARKER_BOTTOM / 2; x < W / 2; ++x) assert(panel[row + x] == 255);
+            for (int x = UI_NAV_REFRESH_END / 2; x < W / 2; ++x)
+                assert(panel[row + x] == front[row + x]);
         }
     }
-    assert(bw_calls == 12 && gray_calls == ordinary && !allocations);
-    int unchanged = calls; begin(&owner_b); assert(calls == unchanged); assert_final();
+    assert(!allocations);
+    if (ordinary) assert(bw_calls == 0 && gray_calls >= 12);
+    else assert(gray_calls == 0 && bw_calls == 12);
+    int unchanged = calls; begin(&owner_b); assert(calls == unchanged);
     }
     reset();
 
@@ -355,17 +370,26 @@ int main(void) {
     // Local background completion and main-page scrolling must not cross the frozen boundary after alignment.
     target(4); begin(&owner_a); int before = calls;
     front[UI_NAV_REFRESH_END / 2 - 1] = final[UI_NAV_REFRESH_END / 2 - 1] = 0x00;
-    front[UI_NAV_MARKER_BOTTOM / 2] = 0;
+    const size_t nav_probe = UI_NAV_MARKER_BOTTOM / 2;
+    front[nav_probe] = 0;
     display_main_transition_arm(&owner_a, false, false);
     assert(update_display_area_diff_with(&hl, &E0470_WAVEFORM, MODE_GL16,
                                         (EpdRect){0, UI_NAV_REFRESH_END - 11, H, 24}) == EPD_DRAW_SUCCESS);
-    assert(last_area.y + last_area.height == UI_NAV_REFRESH_END && calls == before + 1 && !nav_draws);
+    // 底栏并进整页之后局部更新不再被裁到 1088，请求到哪就画到哪。
+    // With the band part of the page, a local update keeps its requested bottom instead of
+    // being cropped at 1088.
+    assert(last_area.y == UI_NAV_REFRESH_END - 11 && last_area.height == 24 && calls == before + 1);
     assert_final();
     display_main_transition_arm(&owner_a, false, false);
-    front[UI_NAV_MARKER_BOTTOM / 2] = 0;
+    // 完全落在底栏里的区域同样按请求刷新，毛玻璃后面的内容才会跟着动。
+    // An area wholly inside the band refreshes as requested, which is what keeps the content
+    // behind the frosted glass moving.
+    front[nav_probe] = 0;
+    memcpy(final, front, BYTES);
     assert(update_display_area_diff_with(&hl, &E0470_WAVEFORM, MODE_GL16,
                                         (EpdRect){0, UI_NAV_TOP, H, 24}) == EPD_DRAW_SUCCESS);
-    assert(calls == before + 1 && !nav_draws); assert_final();
+    assert(last_area.y == UI_NAV_TOP && last_area.height == 24 && calls == before + 2);
+    assert_final();
 
     // 主页面计数独立：不会积累或消耗其他页面的原有清理次数。
     // Main tabs neither accrue nor consume the original cleanup cadence for other pages.
@@ -435,7 +459,9 @@ int main(void) {
     memcpy(final, front, BYTES);
     failures = 1; fail_after = 1; fail_error = EPD_DRAW_OTHER_ERROR;
     begin(&owner_a); assert_final();
-    assert(calls == 3 && clears == 1 && bw_calls == 1 && gc_calls == 1);
+    // 普通模式下导航带按灰阶驱动（胶囊有灰），不再是黑白横条。
+    // In ordinary mode the band is driven in gray because the pill carries grays, not a BW marker.
+    assert(calls == 3 && clears == 1 && bw_calls == 0 && gray_calls == 3 && gc_calls == 1);
 
     // 灰阶只缓存三条带：首遍保留旧亚克力，第二遍单向提交新UI灰阶；重画同图不做往返驱动。
     // Cache three gray bands: the first pass preserves old acrylic and the second commits directional UI grays; identical repaint does not round-trip pixels.

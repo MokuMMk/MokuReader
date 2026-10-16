@@ -721,15 +721,19 @@ static void setting_group(uint8_t *fb, int title_y, const char *title,
     title_y -= s_main_scroll;
     card_y -= s_main_scroll;
     // 屏外的行不测字、不生成字形；保留卡片边界与原滚动坐标。
+    // 主列表一直画到屏幕下沿，让底栏的半透明毛玻璃胶囊有内容可模糊；二级页仍在导航带之上收住。
     // Skip off-screen glyph work while preserving card boundaries and scroll coordinates.
-    if (card_y + count * row_height <= 160 || title_y >= UI_NAV_TOP) return;
-    if (title_y + ui_text_effective_px(20) > 160 && title_y < UI_NAV_TOP)
+    // The main list paints down to the screen edge so the dock's translucent frosted pill has content
+    // to blur; sub-pages still stop at the navigation band.
+    const int bottom = UI_LOCK_HEIGHT;
+    if (card_y + count * row_height <= 160 || title_y >= bottom) return;
+    if (title_y + ui_text_effective_px(20) > 160 && title_y < bottom)
         ui_text(fb, 42, title_y, 20, title, EPD_DRAW_ALIGN_LEFT, false);
     settings_card(fb, (EpdRect){36, card_y, 612, count * row_height}, 22,
                   UI_GRAY_WHITE, 0x70);
     for (int i = 0; i < count; ++i) {
         int y = card_y + i * row_height;
-        if (y + row_height <= 160 || y >= UI_NAV_TOP) continue;
+        if (y + row_height <= 160 || y >= bottom) continue;
         if (i) settings_divider(fb, y, 88, 544);
         setting_icon(fb, icons[i], 67, y + row_height / 2);
         char shown[128]; snprintf(shown,sizeof(shown),"%s",values[i]);
@@ -803,7 +807,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     ui_clear_page(fb);
 
     if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
-        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP},
+        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH,
+                                    s_page == SETTINGS_MAIN ? UI_LOCK_HEIGHT : UI_NAV_TOP},
                       app_settings_main_fast_refresh() && s_page == SETTINGS_MAIN ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     if (s_page == SETTINGS_LOCK_PIN) {
@@ -816,14 +821,14 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         } else row(fb, 406, "开启密码", "设置四位密码  ›");
         if (s_notice[0]) ui_text_vc(fb, 342, 680, 23, s_notice, EPD_DRAW_ALIGN_CENTER, false);
         ui_text_vc(fb, 342, 752, 21, "修改和关闭密码需验证原密码", EPD_DRAW_ALIGN_CENTER, false);
-        ui_nav_draw(fb, 3); return;
+        ui_nav_draw(fb, 2); return;
     }
     if (s_page == SETTINGS_PROFILE) {
         back_header(fb, "个人资料");
         ui_text(fb, 42, 214, 21, "自定义名称与头像", EPD_DRAW_ALIGN_LEFT, false);
         row(fb, 266, "设备名称", app_settings_device_name());
         row(fb, 366, "更换头像", app_settings_avatar_path()[0] ? "已选择图片  ›" : "默认图标  ›");
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_AVATAR) {
@@ -842,7 +847,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, 60, box.y + 40, 24, name, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(611, box.y + 40, 7, UI_GRAY_BLACK, fb);
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_TEXT_EDIT) {
@@ -852,7 +857,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text_input_draw(fb, &s_editor_input, (EpdRect){36, 243, 612, 82}, 28, false, NULL);
         if (s_editor_notice[0]) ui_text_fixed_vc(fb, 36, 510, 22, s_editor_notice, EPD_DRAW_ALIGN_LEFT, false);
         ui_keyboard_draw(fb, 560);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_SHELF_STYLE) {
@@ -877,7 +882,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
                 if (active) epd_fill_circle(609, y + 207, 6, UI_GRAY_BLACK, fb);
             }
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_TIME_EDIT) {
@@ -909,7 +914,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         row(fb, 296, s_main_wifi_saved ? s_main_wifi : "尚未配置", s_main_wifi_saved ? "已保存" : "");
         row(fb, 408, "连接或更改网络", "前往传输  ›");
         ui_text(fb, 54, 529, 21, "配网后可在日期与时间中进行 WiFi 对时。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_SYSTEM_FONT) {
@@ -949,7 +954,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         char pages[24];snprintf(pages,sizeof(pages),"%d / %d",s_font_page+1,(count+l.slots)/l.slots);
         ui_text_fixed_vc(fb,648,1080,18,pages,EPD_DRAW_ALIGN_RIGHT,false);
         if (s_notice[0]) ui_text_fixed_vc(fb,42,1080,18,s_notice,EPD_DRAW_ALIGN_LEFT,false);
-        ui_nav_draw(fb,3);
+        ui_nav_draw(fb, 2);
         if (s_font_sync_confirm) draw_system_font_sync(fb);
         return;
     }
@@ -965,7 +970,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, box.x + 24, box.y + 51, 29, label, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(box.x + box.width - 25, box.y + 51, 8, UI_GRAY_BLACK, fb);
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_MAIN_REFRESH) {
@@ -982,7 +987,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, 64, box.y + 89, 22, detail, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(607, box.y + 38, 8, UI_GRAY_BLACK, fb);
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_SYSTEM_CONTRAST) {
@@ -999,7 +1004,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, 570, box.y + 45, 22, shown, EPD_DRAW_ALIGN_RIGHT, false);
             if (active) epd_fill_circle(605, box.y + 45, 8, UI_GRAY_BLACK, fb);
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_LOCK_STYLE) {
@@ -1019,7 +1024,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 54, 813, 22, "选择壁纸后，可继续从 TF 卡更换图片", EPD_DRAW_ALIGN_LEFT, false);
         if (app_settings_wallpaper_path()[0])
             row(fb, 862, "当前壁纸", strrchr(app_settings_wallpaper_path(), '/') + 1);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_WALLPAPER) {
@@ -1038,7 +1043,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, 60, box.y + 39, 24, name, EPD_DRAW_ALIGN_LEFT, false);
             if (active) epd_fill_circle(609, box.y + 39, 6, UI_GRAY_BLACK, fb);
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_WALLPAPER_PREVIEW) {
@@ -1075,7 +1080,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             ui_text_vc(fb, 210, 677, 24, "取消", EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, 474, 677, 24, "确认", EPD_DRAW_ALIGN_CENTER, true);
         }
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_TIME) {
@@ -1094,7 +1099,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 54, 656, 21, "对时成功后由内部时钟持续走时；无需保持联网。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 54, 694, 21, "长时间离线可能产生误差，建议定期重新对时。", EPD_DRAW_ALIGN_LEFT, false);
         if (s_notice[0]) ui_text(fb, 54, 772, 22, s_notice, EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_AUTO_LOCK) {
@@ -1111,7 +1116,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         }
         ui_text(fb, 48, 760, 23, "操作后重新计时，传输和升级期间暂停", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, 810, 23, "锁屏先浅睡，10 分钟后进入深睡", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_POWER_SLEEP) {
@@ -1130,7 +1135,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         }
         ui_text(fb, 54, 664, 21, "浅睡时按键直接返回，深睡时会重新开机。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 54, 708, 21, "锁屏样式同时适用于壁纸与阅读票根。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_BOOT) {
@@ -1140,7 +1145,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 60, 350, 22, "用于官网完整刷机或故障恢复", EPD_DRAW_ALIGN_LEFT, false);
         ui_draw_button(fb, (EpdRect){60, 438, 564, 78}, s_boot_pending ? "正在进入" : "进入 BOOT 模式", false);
         ui_text(fb, 48, 620, 22, "请用 USB 连接电脑，再打开官网刷机页", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3); return;
+        ui_nav_draw(fb, 2); return;
     }
     if (s_page == SETTINGS_UPGRADE) {
         back_header(fb, "系统升级");
@@ -1181,7 +1186,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         }
         if (s_upgrade_notice[0]) ui_text(fb, 48, 957, 21, s_upgrade_notice, EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, 1010, 20, "首次安装或修复，请通过官网完整刷机", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_CONFIG) {
@@ -1198,7 +1203,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 48, 899, 19, "包含阅读记录、设备资料和已存 WiFi。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, 939, 19, "书籍、字体和图片仍需留在 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, 979, 19, "备份含 WiFi 密码，请妥善保管 TF 卡。", EPD_DRAW_ALIGN_LEFT, false);
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_BLE_SCAN) {
@@ -1235,7 +1240,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, UI_GRAY_WHITE, fb);
         ui_nav_status(fb);
         back_header(fb, "扫描设备");
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     if (s_page == SETTINGS_BLUETOOTH) {
@@ -1309,7 +1314,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, UI_GRAY_WHITE, fb);
         ui_nav_status(fb);
         back_header(fb, "蓝牙翻页器");
-        ui_nav_draw(fb, 3);
+        ui_nav_draw(fb, 2);
         return;
     }
     const int profile_y=180-s_main_scroll, profile_h=settings_profile_height();
@@ -1371,7 +1376,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     ui_nav_status(fb);
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
     if (s_notice[0]) ui_text_fixed_vc(fb, 36, 138, 20, s_notice, EPD_DRAW_ALIGN_LEFT, false);
-    ui_nav_draw(fb, 3);
+    ui_nav_draw(fb, 2);
 }
 
 static void settings_prepare_profile(void) {
@@ -2267,9 +2272,13 @@ static bool settings_present(app_ctx_t *ctx, app_redraw_t redraw) {
         s_scroll_present_pending = false;
         render(ctx, ctx->fb);
         int top = s_page == SETTINGS_MAIN ? 160 : s_page == SETTINGS_SHELF_STYLE ? 242 : 190;
-        EpdRect area = {0, top, UI_LOCK_WIDTH, UI_NAV_REFRESH_END - top};
-        // 只驱动变化像素，滚动次数不触发黑白清屏；题头与底栏保持稳定。
-        // Drive changed pixels only; scroll counts never trigger a wipe, and header/nav stay stable.
+        // 主列表滚到底栏底下，刷新区必须跟到屏幕下沿，否则胶囊里的模糊内容不动。
+        // The main list scrolls under the dock, so its refresh area must reach the screen edge or the
+        // blurred content inside the pill would never be driven.
+        const int bottom = s_page == SETTINGS_MAIN ? UI_LOCK_HEIGHT : UI_NAV_REFRESH_END;
+        EpdRect area = {0, top, UI_LOCK_WIDTH, bottom - top};
+        // 只驱动变化像素，滚动次数不触发黑白清屏；题头与底栏图标保持稳定。
+        // Drive changed pixels only; scroll counts never trigger a wipe, and header/nav icons stay stable.
         guard_draw_result(ctx->hl, update_display_area_diff_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, area));
         return true;
     }
