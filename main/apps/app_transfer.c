@@ -230,8 +230,6 @@ static void draw_methods(uint8_t *fb) {
     ui_text(fb, 42, 180, 21, "选择方式", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect card = {36, 224, 612, 224};
     ui_fill_round_rect(fb, card, 24, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, card, 24, 0x60);
-    ui_draw_round_rect(fb, (EpdRect){37, 225, 610, 222}, 23, 0x60);
     static const char *titles[] = {"WiFi传书", "热点传书"};
     static const char *details[] = {
         "与手机或电脑连接同一个无线网络",
@@ -299,15 +297,9 @@ static void provisioning_button(uint8_t* fb, EpdRect rect, const char* text, int
     ui_draw_button(fb, rect, text, false);
 }
 
-static void network_border(uint8_t *fb, EpdRect rect, int radius) {
-    ui_draw_round_rect(fb, rect, radius, 0x50);
-    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2}, radius - 1, 0x50);
-}
-
 static void network_button(uint8_t *fb, int id, const char *label, bool dark) {
     EpdRect rect = network_control_rect(id);
     ui_fill_round_rect(fb, rect, 16, s_pressed == id ? 0xb0 : dark ? UI_GRAY_BLACK : UI_GRAY_WHITE);
-    if (!dark) network_border(fb, rect, 16);
     ui_text_vc(fb, rect.x + rect.width / 2, rect.y + rect.height / 2, 24, label,
                EPD_DRAW_ALIGN_CENTER, dark && s_pressed != id);
 }
@@ -331,7 +323,6 @@ static void draw_networks(uint8_t* fb) {
     ui_text(fb, 42, 182, 24, "当前网络", EPD_DRAW_ALIGN_LEFT, false);
     EpdRect current = {36, 224, 612, 154};
     ui_fill_round_rect(fb, current, 22, UI_GRAY_WHITE);
-    network_border(fb, current, 22);
     if (s_saved_configured) {
         char saved[40]; snprintf(saved, sizeof(saved), "%s", s_saved_ssid); fit_label(saved, 29, 375);
         ui_nav_wifi_icon(fb, 74, 265, 28, UI_GRAY_BLACK);
@@ -382,7 +373,6 @@ static void draw_networks(uint8_t* fb) {
         ui_text(fb, 64, rect.y + 59, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
         ui_text_vc(fb, 615, rect.y + 47, 27, "›", EPD_DRAW_ALIGN_CENTER, false);
     }
-    network_border(fb, list, 22);
     if (s_network_count > NETWORK_ROWS) {
         network_button(fb, 7, "‹", false);
         network_button(fb, 9, "›", false);
@@ -400,6 +390,7 @@ static void draw_networks(uint8_t* fb) {
 
 static void draw_password(uint8_t* fb) {
     ui_clear_page(fb);
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
     transfer_header(fb, "连接 WiFi", "输入完成后连接，密码只保存在本机");
     char name[33];
     snprintf(name, sizeof(name), "%s", s_selected.ssid);
@@ -624,16 +615,16 @@ static app_redraw_t password_paint(app_ctx_t *ctx, bool field, bool controls) {
         UI_PX_BODY, !s_password_visible, NULL, field);
     EpdRect extra = {UI_MARGIN, 215, ui_content_width(), controls ? 287 : 159};
     if (update.field || controls) {
-        ui_clear_rect_fast(ctx->fb, (EpdRect){UI_MARGIN, 215, ui_content_width() - 156, 58});
+        ui_fill_rect_fast((EpdRect){UI_MARGIN, 215, ui_content_width() - 156, 58}, 0xe0, ctx->fb);
         char caption[80];
         snprintf(caption, sizeof(caption), "%s · %u/%u", s_selected.requires_password ? "密码" : "开放网络，无需密码", (unsigned)strlen(s_password), PASSWORD_MAX);
         ui_text_fixed_vc(ctx->fb, UI_MARGIN, 240, 22, caption, EPD_DRAW_ALIGN_LEFT, false);
     }
     if (controls) {
-        ui_clear_rect_fast(ctx->fb, (EpdRect){36, 377, 612, 36});
+        ui_fill_rect_fast((EpdRect){36, 377, 612, 36}, 0xe0, ctx->fb);
         ui_text_fixed_vc(ctx->fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
         for (int i = 44; i <= 46; ++i) {
-            EpdRect button = password_control_rect(i); ui_clear_rect_fast(ctx->fb, button);
+            EpdRect button = password_control_rect(i); ui_fill_rect_fast(button, 0xe0, ctx->fb);
             provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隐藏" : "显示" : "连接并保存", i);
         }
     }
@@ -699,9 +690,8 @@ static uint64_t free_bytes(void* arg) { return book_store_free_bytes(arg); }
 
 static void draw_status(uint8_t* fb) {
     EpdRect area = status_rect();
-    ui_clear_rect_fast(fb, area);
+    ui_fill_rect_fast(area, 0xe0, fb);
     ui_fill_round_rect(fb, area, 24, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, area, 24, 0x98);
     const char* state = "网络已停止";
     if (s_start_pending || s_status.state == READ_PICO_TRANSFER_STARTING) state = "正在准备传书…";
     else if (s_status.state == READ_PICO_TRANSFER_READY) state = "等待上传";
@@ -755,12 +745,12 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     (void)ctx;
     if (s_usb_entry) {
         ui_clear_page(fb);
+        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
         bool active = usb_storage_active();
         transfer_header(fb, "USB 读卡", NULL);
         ui_text(fb, 42, 181, 20, "连接状态", EPD_DRAW_ALIGN_LEFT, false);
         EpdRect status = {36, 211, 612, 190};
         ui_fill_round_rect(fb, status, 24, UI_GRAY_WHITE);
-        ui_draw_round_rect(fb, status, 24, 0x90);
         const char *state = s_usb_start_pending ? "正在准备 TF 卡" :
             !active ? "USB 读卡未开启" :
             s_usb_host_connected ? "电脑已连接" : "等待电脑连接";
@@ -793,10 +783,12 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_view == TRANSFER_NETWORKS) { draw_networks(fb); return; }
     if (s_view == TRANSFER_PASSWORD) { draw_password(fb); return; }
     ui_clear_page(fb);
+    // 传书各页统一灰底：白色信息块直接浮在灰面上，不再描边。
+    // Every transfer page shares the gray ground: white blocks float without outlines.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
     transfer_header(fb, s_mode == READ_PICO_TRANSFER_MODE_AP ? "热点传书" : "WiFi 传书", NULL);
     EpdRect connection = {36, 168, 612, 132};
     ui_fill_round_rect(fb, connection, 24, UI_GRAY_WHITE);
-    ui_draw_round_rect(fb, connection, 24, 0x98);
     char name[64];
     snprintf(name, sizeof(name), "%s", s_mode == READ_PICO_TRANSFER_MODE_AP ? s_status.ssid : s_status.wifi_ssid);
     if (!name[0]) snprintf(name, sizeof(name), "%s", s_mode == READ_PICO_TRANSFER_MODE_AP ? "kiikoread 热点" : "已保存的 WiFi");
@@ -814,7 +806,6 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_status.network_ready && s_qr_ready)
         ui_wifi_qr_draw(fb, (EpdRect){222, 330, 240, 240});
     else {
-        ui_draw_round_rect(fb, (EpdRect){222, 330, 240, 240}, 8, 0xa0);
         ui_text_vc(fb, 342, 450, 22, s_start_pending ? "正在生成二维码…" : "等待网络地址…", EPD_DRAW_ALIGN_CENTER, false);
     }
     if (s_mode == READ_PICO_TRANSFER_MODE_AP) {
@@ -824,7 +815,6 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
         for (int i = 0; i < 2; ++i) {
             EpdRect tab = control_rect(i);
             ui_fill_round_rect(fb, tab, 18, (s_qr_url == (i == 1)) ? 0x42 : UI_GRAY_WHITE);
-            ui_draw_round_rect(fb, tab, 18, 0x92);
             ui_text_vc(fb, tab.x + tab.width / 2, tab.y + tab.height / 2, 21,
                        i ? "打开传书网页" : "连接 kiikoread 热点", EPD_DRAW_ALIGN_CENTER, s_qr_url == (i == 1));
         }

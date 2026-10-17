@@ -80,7 +80,7 @@ typedef enum {APP_REDRAW_PAGE,APP_REDRAW_AREA,APP_REDRAW_NONE,APP_REDRAW_FULL} a
 typedef struct {int x,y,width,height;} EpdRect;
 static EpdRect ui_bar_rect(int i,int count){int width=(508-(count-1)*12)/count;return(EpdRect){40+i*(width+12),1096,width,96};}
 static bool ui_rect_hit(EpdRect r,int x,int y){return x>=r.x&&x<r.x+r.width&&y>=r.y&&y<r.y+r.height;}
-typedef struct {char name[256],author[128],path[288];uint32_t size;uint16_t chapter;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match,favorite;} shelf_entry_t;
+typedef struct {char name[256],author[128],path[288];uint32_t size;uint16_t chapter;bool is_flash,has_progress;uint8_t pct;uint32_t recent;bool selected,removed,search_match,favorite,finished;} shelf_entry_t;
 #define BOOK_ROWS 13
 #define BOOK_GRID_ROWS 9
 #define BOOK_BULK_ROWS 6
@@ -150,6 +150,7 @@ static char s_message[128],s_shelf_warning[128],s_storage[128];
 static bool s_pending_invalidated,test_oom,test_degraded;
 static bool pico_boot_asset_allowed(const char *path){(void)path;return true;}
 static unsigned s_store_revision;
+static unsigned s_shelf_flag_revision,s_flags_scanned;
 typedef struct {char path[288];bool is_flash;} book_store_root_t;
 typedef struct {uint32_t file_size;uint16_t chapter;uint32_t byte_off;uint8_t px,pct;uint32_t last_open_s;} book_progress_t;
 typedef bool (*book_progress_visit_fn)(const char*,const book_progress_t*,void*);
@@ -157,7 +158,7 @@ typedef struct {char path[BOOK_STORE_PATH_MAX];book_progress_t value;} test_prog
 static test_progress_t test_progress[8];
 static int test_progress_count;
 static char test_recent_path[BOOK_STORE_PATH_MAX];
-typedef struct {nvs_handle_t favorites,hidden;bool truncated;} shelf_backfill_t;
+typedef struct {nvs_handle_t favorites,shelf_flags;bool truncated;} shelf_backfill_t;
 static esp_err_t book_progress_list(book_progress_visit_fn visit,void* ctx){
     for(int i=0;i<test_progress_count;i++)if(!visit(test_progress[i].path,&test_progress[i].value,ctx))break;
     return ESP_OK;
@@ -219,6 +220,7 @@ static int book_progress_set_last_path(const char* p){test_last_calls++;if(!test
 static void save_progress(void);
 static void invalidate_prep(void){}
 static void invalidate_covers(void){}
+static void book_lock_collage_invalidate(void){}
 static shelf_entry_t s_managed;
 static bool s_delete_confirm,s_file_removed,s_clear_confirm;
 static char s_manage_message[128];
@@ -386,12 +388,14 @@ typedef struct{char path[288];int pages[2],count;bool available;}shelf_category_
 static shelf_category_t *s_categories;
 static int s_category_count,s_category_capacity,s_category_selected,s_category_menu_page;
 static bool s_category_menu;
+static bool s_category_finished;
+static int s_finished_count,s_finished_pages[2];
 static char s_category_root[288];
 """
 unit += function("book_layout_balanced_rect", layout_source) + "\n"
 unit += function("set_reader_view") + "\n"
 unit += function("ble_pt_action_for_usage", source.parents[2] / "components/ble_page_turner/src/ble_page_turner.c") + "\n"
-for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_hidden_key", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_rows", "row_rect", "shelf_category_add", "shelf_category_init", "shelf_category_matches", "shelf_category_remember", "shelf_category_restore", "shelf_categories_recount", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
+for name in ("inline_ink_gray", "reader_margin_width", "reader_margin_levels", "reader_margin_level_for", "reader_margin_for_level", "slider_index", "reader_margin_input", "reader_area", "reader_fullscreen_progress_area", "body_rect_for_tracking", "body_rect", "progress_rect", "copy_text", "reader_footer_strip_number", "favorite_key", "favorite_read_handle", "shelf_flag_key", "shelf_flag_read_handle", "shelf_flag_load", "shelf_flag_save", "shelf_hidden_read_handle", "shelf_hidden_load", "shelf_hidden_save", "shelf_finished_read_handle", "shelf_rows", "row_rect", "shelf_category_add", "shelf_category_init", "shelf_category_matches", "shelf_category_remember", "shelf_category_restore", "shelf_categories_recount", "shelf_matches", "compare_books", "sort_shelf", "shelf_reserve", "delete_retry_find", "delete_retry_reserve", "delete_retry_discard", "scan_shelf_dir", "shelf_backfill_visit", "shelf_backfill_read_books", "scan_shelf", "refresh_cached_progress",
              "pending_find", "pending_reserve", "pending_restore", "pending_discard", "pending_mark_latest", "pending_drop_invalidated", "pending_flush", "reader_page_offset", "save_progress", "retry_progress", "layout_name", "manage_panel", "manage_rect", "batch_rect", "manage_back_rect", "bulk_filter_rect", "bulk_nav_rect", "bulk_nav_hit", "leaves", "selected_count", "clear_selection", "toggle_selection", "select_page", "bookmark_compact", "search_begin", "refresh_search_matches", "search_finish", "refresh_capacity", "manage_apply", "manage_action", "batch_apply", "batch_action", "bulk_turn_page", "bulk_finish", "bulk_action", "bulk_control_at", "menu_handle_enabled", "reader_manual_refresh", "apply_reader_option", "reader_return", "reader_key_action", "on_key", "on_key_long", "draw_wrapped_name", "open_requested_book", "on_enter", "book_on_exit"):
     unit += function(name) + "\n"
 for name in ("book_remote_direction", "shelf_turn_page", "shelf_page_arrow_rect", "reader_swipe_direction"):
@@ -628,7 +632,7 @@ int main(void) {
     assert(s_count==66&&!shelf_hidden_load(outside));
     assert(shelf_hidden_save(test_progress[3].path,true));scan_shelf(&ctx);assert(s_count==65);
     assert(shelf_hidden_save(test_progress[3].path,false));
-    char hidden_key[11];shelf_hidden_key(outside,hidden_key);
+    char hidden_key[11];shelf_flag_key(outside,'h',hidden_key);
     assert(nvs_set_str(2,hidden_key,changed)==ESP_OK);
     assert(!shelf_hidden_save(outside,true)&&!shelf_hidden_load(outside));
     assert(!shelf_hidden_save(outside,false));

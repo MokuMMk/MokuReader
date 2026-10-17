@@ -95,6 +95,10 @@
  * Latest user revision: book/chapter titles reuse the current reader face at the original 32/48px; Home uses its active system face, never retaining both fonts.
  * 用户确认：题头下拉选择 books 子目录，各类别/布局记住页码；去掉题头横线，主体在确认位置基础上下移8px。
  * User approval: choose books subfolders in the title menu, retain per-category/layout pages, remove the header rule and lower the approved body by 8px.
+ * 用户修订：已读完只在分类弹窗顶部固定项里显示，不进普通分类和首页继续阅读；重新打开这本书即撤销该标记。
+ * User revision: finished books appear only under the category popup's fixed row, never in ordinary groups or Home; opening the book again clears the mark.
+ * 用户修订：阅读二级面板改用灰色底与顶边投影分层，去掉面板和卡片的外描边。
+ * User revision: reader secondary panels layer with a gray surface and a top-edge shadow instead of panel/card outlines.
  */
 #include <dirent.h>
 #include <errno.h>
@@ -207,6 +211,9 @@ typedef struct {
     uint8_t pct;
     uint32_t recent;
     bool selected, removed, search_match, favorite;
+    // 已读完：普通分类和首页继续阅读都不显示，只在分类弹窗顶部固定项里出现。
+    // Finished: kept out of ordinary groups and the Home strip, shown only under the popup's fixed row.
+    bool finished;
 } shelf_entry_t;
 
 static const char* TAG = "book";
@@ -236,6 +243,11 @@ static int64_t s_cover_warm_after_ms;
 static size_t s_shelf_capacity;
 static int s_count, s_visible_count, s_filter;
 static bool s_recent_sort;
+// 分类弹窗顶部固定项“已读完”：不参与分类翻页，普通分类里不显示已读完的书。
+// The popup's fixed "finished" row: never paged with the categories, and finished books stay out of
+// every ordinary group.
+static bool s_category_finished;
+static int s_finished_count, s_finished_pages[2];
 // 目录记录有界增长；同一开机周期按完整路径保存两种布局的页码。
 // Bounded folder records retain pages by full path for the two layouts during this boot.
 #define SHELF_CATEGORY_LIMIT 128
@@ -294,6 +306,11 @@ static bool s_save_failed;
 static bool s_pending_invalidated;
 static int64_t s_save_retry_ms;
 static unsigned s_store_revision;
+// 逐书标记（已读完 / 从继续阅读隐藏）只需书架和首页重扫，不能借用内容版本：内容版本还会让
+// 头像、锁屏拼贴和封面任务整体重建，而按下标记时一个文件都没动。
+// Per-book marks only need a shelf/Home rescan and must not borrow the content revision: that also
+// rebuilds avatars, the lock collage and cover jobs although no file changed.
+static unsigned s_shelf_flag_revision, s_flags_scanned;
 static uint32_t s_progress_revision=UINT32_MAX;
 static bool s_shelf_cache_valid, s_cache_sd_present, s_cache_sd_mounted;
 static uint8_t s_cache_shelf_style;
@@ -924,7 +941,6 @@ static void draw_shelf_cover(uint8_t* fb, EpdRect card, int row, const char* nam
         ui_text_vc(fb, image.x + image.width / 2, image.y + image.height / 2, 26,
                    title, EPD_DRAW_ALIGN_CENTER, false);
     }
-    ui_draw_round_rect(fb, image, 0, UI_GRAY_BLACK);
     if (favorite && image.width >= 28 && image.height >= 42) {
         draw_shelf_favorite_icon(fb, image.x + 10, image.y + 8, 24, 31,
                                  artwork && ((app_settings_main_fast_refresh() && shelf_painted() && fast_cover_matches(row, image))
@@ -975,7 +991,12 @@ static void draw_list_row(uint8_t *fb, int row, const shelf_entry_t *item) {
     ui_text_fixed_ink_vc(fb, 244, card.y + author_y, author_px, author, EPD_DRAW_ALIGN_LEFT, 0x60);
     unsigned progress = item->has_progress ? item->pct : 0;
     if (progress > 100) progress = 100;
-    char label[48]; snprintf(label, sizeof(label), progress == 100 ? "已读完 · %u%%" :
+    char label[48];
+    // 标记为已读完的书不一定读到 100%，这一行就只写状态，不拿百分比自相矛盾。
+    // A book marked finished has not necessarily reached 100%, so this line states the status only
+    // and does not contradict it with a percentage.
+    if (item->finished) snprintf(label, sizeof(label), "已读完");
+    else snprintf(label, sizeof(label), progress == 100 ? "已读完 · %u%%" :
                               progress ? "已读 %u%%" : "未开始 · %u%%", progress);
     ui_text_fixed_vc(fb, 244, card.y + 143, progress_px, label, EPD_DRAW_ALIGN_LEFT, false);
     EpdRect bar = {244, card.y + 163, 378, 11};
@@ -985,7 +1006,6 @@ static void draw_list_row(uint8_t *fb, int row, const shelf_entry_t *item) {
         if (fill.width < 1) fill.width = 1;
         ui_fill_round_rect(fb, fill, 5, 0x40);
     }
-    ui_draw_control_frame(fb, bar, 5, 0x50);
     if (row < 3) ui_draw_separator(fb, card.y + 196, 50, 584, 0x60);
 }
 static void draw_shelf_furniture(uint8_t* fb) {
@@ -1008,10 +1028,18 @@ static void draw_shelf_furniture(uint8_t* fb) {
         }
     }
 }
+// 阅读工具栏做成和底栏同款的浮动胶囊：左右各让 18，高度 112，半径取半高。
+// 命中测试也用这个矩形，所以按钮位置和视觉一起挪，不会错位。
+// The reader toolbar becomes the same floating capsule as the dock: 18 px in from each side,
+// 112 tall, radius half the height. Hit testing uses the same rect, so buttons move with it.
+#define READER_TOOL_X 18
+#define READER_TOOL_W (UI_LOCK_WIDTH - READER_TOOL_X * 2)
+#define READER_TOOL_TOP 1096
+#define READER_TOOL_H 112
 static EpdRect tool_rect(int i) {
-    int x0 = i * UI_LOCK_WIDTH / BOOK_TOOL_COUNT;
-    int x1 = (i + 1) * UI_LOCK_WIDTH / BOOK_TOOL_COUNT;
-    return (EpdRect){x0, 1096, x1 - x0, 120};
+    int x0 = READER_TOOL_X + i * READER_TOOL_W / BOOK_TOOL_COUNT;
+    int x1 = READER_TOOL_X + (i + 1) * READER_TOOL_W / BOOK_TOOL_COUNT;
+    return (EpdRect){x0, READER_TOOL_TOP, x1 - x0, READER_TOOL_H};
 }
 static int leaves(void) {
     if (s_view == TOC) return book_toc_pages(book_navigation_count());
@@ -1372,7 +1400,6 @@ static int draw_wrapped_name(uint8_t* fb, const char* name, int y) {
 static void draw_manage(uint8_t* fb) {
     EpdRect panel = manage_panel();
     ui_fill_round_rect(fb, panel, UI_BTN_RADIUS, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, panel, UI_BTN_RADIUS, UI_GRAY_BLACK);
     ui_text(fb, UI_MARGIN, panel.y + 18, UI_PX_BODY,
             s_clear_confirm ? (s_delete_confirm ? "确认删除文件？" : "确认清除进度？") : "图书详情", EPD_DRAW_ALIGN_LEFT, false);
     int y = draw_wrapped_name(fb, s_managed.name, panel.y + 74) + 12;
@@ -1416,6 +1443,10 @@ static void editor_start(void) {
 
 static void draw_editor(uint8_t* fb) {
     ui_clear_page(fb);
+    // 输入页也用灰底；输入框和键盘保持可操作外观，只去掉页面里的卡片描边。
+    // The edit page also uses the gray ground; the input field and keyboard keep their operable look,
+    // while page-level card outlines are gone.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
     ui_nav_status(fb);
     ui_nav_back(fb, 36, 79);
     ui_text_vc(fb, UI_LOCK_WIDTH / 2, 107, 31, "编辑书籍", EPD_DRAW_ALIGN_CENTER, false);
@@ -1439,7 +1470,6 @@ static void draw_editor(uint8_t* fb) {
         fit_text(title, 22, cover.width - 16);
         ui_text_vc(fb, cover.x + cover.width / 2, cover.y + cover.height / 2, 22, title, EPD_DRAW_ALIGN_CENTER, false);
     }
-    ui_draw_round_rect(fb, cover, 0, UI_GRAY_BLACK);
     char title[128]; copy_text(title, sizeof(title), s_managed.name);
     fit_text(title, 30, 460);
     ui_text(fb, 174, 192, 30, title, EPD_DRAW_ALIGN_LEFT, false);
@@ -1452,7 +1482,9 @@ static void draw_editor(uint8_t* fb) {
     ui_keyboard_draw(fb, 560);
 }
 static void draw_search(uint8_t* fb) {
-    ui_clear_page(fb); ui_nav_status(fb);
+    ui_clear_page(fb);
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
+    ui_nav_status(fb);
     ui_nav_back(fb, 36, 79);
     ui_text_vc(fb, 342, 107, 34, "搜索图书", EPD_DRAW_ALIGN_CENTER, false);
     ui_text_vc(fb, 646, 107, 25, "应用", EPD_DRAW_ALIGN_RIGHT, false);
@@ -1463,8 +1495,8 @@ static void draw_search(uint8_t* fb) {
 }
 static void draw_import_menu(uint8_t* fb) {
     const EpdRect menu = import_menu_rect();
+    ui_draw_popup_shadow(fb, menu, IMPORT_MENU_RADIUS);
     ui_fill_round_rect(fb, menu, IMPORT_MENU_RADIUS, 0xf0);
-    ui_draw_control_frame(fb, menu, IMPORT_MENU_RADIUS, 0x70);
     static const ui_icon_t icons[IMPORT_ROWS] = {
         UI_ICON_FILE, UI_ICON_WIFI, UI_ICON_LINK, UI_ICON_USB, UI_ICON_CLOUD_DOWNLOAD
     };
@@ -1485,8 +1517,8 @@ static void draw_import_menu(uint8_t* fb) {
 static void draw_batch_confirmation(uint8_t* fb) {
     if (!s_batch_confirm) return;
     EpdRect panel = {54, 406, 576, 330};
+    ui_draw_popup_shadow(fb, panel, 25);
     ui_fill_round_rect(fb, panel, 25, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, panel, 25, 0x48);
     char title[96];
     const char* verb = s_batch_kind == BATCH_DELETE ? "删除" :
                        s_batch_kind == BATCH_CLEAR ? "清除进度：" : "从书架移除";
@@ -1507,6 +1539,9 @@ static int bulk_nav_hit(int x, int y) {
 }
 static void draw_bulk(uint8_t* fb, int leaf) {
     ui_clear_page(fb);
+    // 管理页与书架同一底色：白卡片直接浮在灰底上，不再描边。
+    // The management page shares the shelf's gray ground: white cards float without outlines.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
     ui_nav_status(fb);
     ui_nav_back(fb, 36, 79);
     ui_text_vc(fb, 342, 107, 34, "管理书架", EPD_DRAW_ALIGN_CENTER, false);
@@ -1519,7 +1554,6 @@ static void draw_bulk(uint8_t* fb, int leaf) {
     for (int i = 0; i < 3; ++i) {
         EpdRect r = bulk_filter_rect(i);
         ui_fill_round_rect(fb, r, 20, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, r, 20, 0x70);
         ui_text_vc(fb, r.x + r.width / 2, r.y + 35, 21, filters[i], EPD_DRAW_ALIGN_CENTER, false);
     }
     for (int row = 0; row < BOOK_BULK_ROWS; ++row) {
@@ -1528,7 +1562,6 @@ static void draw_bulk(uint8_t* fb, int leaf) {
         EpdRect r = row_rect(row);
         bool selected = s_shelf[index].selected;
         ui_fill_round_rect(fb, r, 18, selected ? 0xd0 : UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, r, 18, selected ? 0x60 : 0x70);
         char title[128]; copy_text(title, sizeof(title), s_shelf[index].name);
         fit_text(title, 26, 495);
         ui_text_vc(fb, r.x + 22, r.y + 31, 26, title, EPD_DRAW_ALIGN_LEFT, false);
@@ -1548,8 +1581,8 @@ static void draw_bulk(uint8_t* fb, int leaf) {
                                    "删除所选", "清进度", "移出书架"};
     for (int i = 0; i < 6; ++i) {
         EpdRect r = batch_rect(i);
+        // 批量按钮用白底区分，不再描边。/ Batch buttons separate by the white fill, not an outline.
         ui_fill_round_rect(fb, r, 18, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, r, 18, 0x70);
         ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 20, labels[i], EPD_DRAW_ALIGN_CENTER, false);
     }
     const char *nav[] = {"上一页", "完成", "下一页"};
@@ -1559,9 +1592,12 @@ static void draw_bulk(uint8_t* fb, int leaf) {
     for (int i = 0; i < 3; ++i) {
         EpdRect r = bulk_nav_rect(i);
         bool available = i == 1 || (i == 0 ? leaf > 0 : leaf + 1 < leaves());
-        ui_fill_round_rect(fb, r, 20, i == 1 ? 0x20 : UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, r, 20, available ? 0x70 : 0xb0);
-        ui_text_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 25, nav[i], EPD_DRAW_ALIGN_CENTER, i == 1);
+        // 翻页按钮靠底色区分：完成是黑底白字，两端用白底；不可用时压成浅灰底灰字。
+        // Paging buttons separate by fill: Done is black with white text, sides are white, and an
+        // unavailable side falls back to a light gray fill with gray ink.
+        ui_fill_round_rect(fb, r, 20, i == 1 ? 0x20 : available ? UI_GRAY_WHITE : 0xe8);
+        ui_text_fixed_ink_vc(fb, r.x + r.width / 2, r.y + r.height / 2, 25, nav[i],
+                             EPD_DRAW_ALIGN_CENTER, i == 1 ? 0xff : available ? 0x00 : 0x90);
     }
     draw_batch_confirmation(fb);
 }
@@ -1665,48 +1701,83 @@ static bool favorite_save(const char *path, bool value) {
 // Removing from the shelf hides the entry only: no file or progress is touched, and opening the
 // book again puts it back. 值为完整路径，命中的同键记录属于别的书时拒绝覆盖。
 // The value is the full path, so a colliding key owned by a different book is never overwritten.
+// 同一命名空间还存另外两种逐书标记，用前缀区分：h_ 从书架移除，f_ 已读完，r_ 从继续阅读隐藏。
+// 三种值都存完整路径，碰撞键属于别的书时一律拒绝覆盖。
+// The same namespace also holds two more per-book flags, told apart by prefix: h_ removed from the
+// shelf, f_ finished, r_ hidden from continue reading. All three store the full path and refuse to
+// overwrite a colliding key owned by another book.
 #define SHELF_HIDDEN_NS "rp_shelf"
-static void shelf_hidden_key(const char *path, char key[11]) {
+static void shelf_flag_key(const char *path, char tag, char key[11]) {
     uint32_t hash = UINT32_C(2166136261);
     for (const unsigned char *p = (const unsigned char *)path; *p; ++p)
         hash = (hash ^ *p) * UINT32_C(16777619);
-    snprintf(key, 11, "h_%08lx", (unsigned long)hash);
+    snprintf(key, 11, "%c_%08lx", tag, (unsigned long)hash);
 }
-static bool shelf_hidden_read_handle(nvs_handle_t h, const char *path) {
+static bool shelf_flag_read_handle(nvs_handle_t h, const char *path, char tag) {
     char stored[BOOK_STORE_PATH_MAX];
     char key[11];
-    shelf_hidden_key(path, key);
+    shelf_flag_key(path, tag, key);
     size_t len = sizeof(stored);
     return nvs_get_str(h, key, stored, &len) == ESP_OK && strcmp(stored, path) == 0;
 }
-static bool shelf_hidden_load(const char *path) {
+static bool shelf_flag_load(const char *path, char tag) {
     nvs_handle_t h;
     if (nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &h) != ESP_OK) return false;
-    bool hidden = shelf_hidden_read_handle(h, path);
+    bool value = shelf_flag_read_handle(h, path, tag);
     nvs_close(h);
-    return hidden;
+    return value;
 }
-static bool shelf_hidden_save(const char *path, bool hidden) {
+static bool shelf_flag_save(const char *path, char tag, bool value) {
     nvs_handle_t h;
     if (nvs_open(SHELF_HIDDEN_NS, NVS_READWRITE, &h) != ESP_OK) return false;
     char key[11];
-    shelf_hidden_key(path, key);
+    shelf_flag_key(path, tag, key);
     char stored[BOOK_STORE_PATH_MAX];
     size_t len = sizeof(stored);
     esp_err_t existing = nvs_get_str(h, key, stored, &len);
     esp_err_t err = existing == ESP_ERR_NVS_NOT_FOUND ? ESP_OK : existing;
     if (existing == ESP_OK && strcmp(stored, path) != 0) err = ESP_ERR_INVALID_STATE;
-    // 恢复上架也校验路径，避免擦掉碰撞键属于另一书的隐藏记录。
-    // Check ownership when unhiding too, so a collision cannot erase a different book removal.
-    if (err == ESP_OK && hidden) err = nvs_set_str(h, key, path);
+    // 恢复也校验路径，避免擦掉碰撞键属于另一书的标记。
+    // Check ownership when clearing too, so a collision cannot erase a different book's flag.
+    if (err == ESP_OK && value) err = nvs_set_str(h, key, path);
     else if (err == ESP_OK) {
         err = nvs_erase_key(h, key);
         if (err == ESP_ERR_NVS_NOT_FOUND) err = ESP_OK;
     }
     if (err == ESP_OK) err = nvs_commit(h);
     nvs_close(h);
-    if(err==ESP_OK)book_lock_collage_invalidate();
     return err == ESP_OK;
+}
+static bool shelf_hidden_read_handle(nvs_handle_t h, const char *path) {
+    return shelf_flag_read_handle(h, path, 'h');
+}
+static bool shelf_hidden_load(const char *path) { return shelf_flag_load(path, 'h'); }
+static bool shelf_hidden_save(const char *path, bool hidden) {
+    bool ok = shelf_flag_save(path, 'h', hidden);
+    if (ok) book_lock_collage_invalidate();
+    return ok;
+}
+static bool shelf_finished_read_handle(nvs_handle_t h, const char *path) {
+    return shelf_flag_read_handle(h, path, 'f');
+}
+// 已读完与继续阅读隐藏都会改变书架/首页的取书范围，保存成功后只让这两个页面重扫。
+// Both flags change what the shelf and Home enumerate; after a save only those two pages rescan.
+unsigned app_book_shelf_flag_revision(void) { return s_shelf_flag_revision; }
+bool app_book_finished(const char *path) {
+    return path && path[0] && shelf_flag_load(path, 'f');
+}
+bool app_book_set_finished(const char *path, bool finished) {
+    if (!path || !path[0] || !shelf_flag_save(path, 'f', finished)) return false;
+    ++s_shelf_flag_revision;
+    return true;
+}
+bool app_book_resume_hidden(const char *path) {
+    return path && path[0] && shelf_flag_load(path, 'r');
+}
+bool app_book_set_resume_hidden(const char *path, bool hidden) {
+    if (!path || !path[0] || !shelf_flag_save(path, 'r', hidden)) return false;
+    ++s_shelf_flag_revision;
+    return true;
 }
 static bool bookmark_read_handle(nvs_handle_t h, reader_bookmarks_t* marks) {
     if (!marks || !s_path[0]) return false;
@@ -1859,7 +1930,13 @@ static void draw_reader_tool_icon(uint8_t* fb, int cx, int cy, int kind, bool se
     };
     if (kind < 0 || kind >= (int)(sizeof(tools) / sizeof(tools[0]))) return;
     const ui_icon_t icon = (kind == 1 && selected) ? UI_ICON_BOOKMARK_CHECK : tools[kind];
-    ui_draw_icon(fb, cx, cy, READER_TOOL_ICON_PX, icon, 0x38);
+    // 图标改灰色：白玻璃上纯黑笔画太重，灰一档和标签的灰阶更协调。
+    // Icons are gray now: full black is too heavy on white glass and reads better against the
+    // gray labels.
+    // 图标用纯黑：工具栏现在是不透明白玻璃，黑笔画最清楚；灰一档会被白层冲淡。
+    // Icons are solid black: the toolbar is opaque white glass now, so black strokes read best and
+    // a gray tone would be washed out by the white layer.
+    ui_draw_icon(fb, cx, cy, READER_TOOL_ICON_PX, icon, 0x00);
 }
 
 // 单行辅助文字保持在当前控件内；本机只使用当前活动字库，按原轮廓重新光栅化。
@@ -1877,11 +1954,25 @@ static void reader_panel_text(uint8_t *fb,int x,int y,int px,const char *text,
     reader_panel_text_vc(fb,x,y+height/2,px,text,align,inverted);
 }
 
+// 二级面板不再描边：面板底色压灰，顶边用抖动灰阶投影和正文分层，卡片靠白色底块浮在灰面上。
+// Secondary sheets no longer draw a stroke: the surface turns gray, a dithered gray shadow along the
+// top edge separates it from the body text, and white cards float on that gray without outlines.
+#define SHEET_FILL 0xe8
+#define SHEET_SHADOW_PX 20
 static void draw_sheet(uint8_t* fb, int top, const char* title) {
+    // 投影只叠在正文上，靠近面板最暗、向外渐隐；16 级灰度抖动藏掉台阶。
+    // The shadow tints only the body, darkest at the panel edge and fading outward; 16-level
+    // dithering hides the steps between tones.
+    for (int i = 0; i < SHEET_SHADOW_PX; ++i) {
+        const int y = top - SHEET_SHADOW_PX + i;
+        if (y < 0) continue;
+        const uint8_t tone = (uint8_t)(0xff - (i + 1) * 0x3b / SHEET_SHADOW_PX);
+        for (int x = 0; x < UI_LOCK_WIDTH; ++x)
+            epd_draw_pixel(x, y, ui_image_dither_gray(tone, x, y), fb);
+    }
     EpdRect sheet = {0, top, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - top + 28};
-    ui_fill_round_rect(fb, sheet, 28, UI_GRAY_WHITE);
-    ui_fill_rect_fast((EpdRect){0, top + 28, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - top - 28}, UI_GRAY_WHITE, fb);
-    ui_draw_control_frame(fb, sheet, 28, 0x58);
+    ui_fill_round_rect(fb, sheet, 28, SHEET_FILL);
+    ui_fill_rect_fast((EpdRect){0, top + 28, UI_LOCK_WIDTH, UI_LOCK_HEIGHT - top - 28}, SHEET_FILL, fb);
     ui_fill_round_rect(fb, (EpdRect){292, top + 14, 100, 7}, 3, 0x48);
     ui_text_box(fb,(EpdRect){110,top+26,464,66},30,title,EPD_DRAW_ALIGN_CENTER,false);
 }
@@ -1890,15 +1981,17 @@ static void draw_sheet(uint8_t* fb, int top, const char* title) {
 // Secondary-panel back control: a circle with the Lucide chevron-left, shared by the panels.
 static void draw_sheet_back(uint8_t* fb, int top) {
     ui_click_feedback_register(fb, (EpdRect){32, top + 25, 64, 64}, UI_CLICK_BACK, UI_ICON_CHEVRON_LEFT);
-    epd_draw_circle(64, top + 57, 24, UI_NAV_BACK_BORDER_GRAY, fb);
-    epd_draw_circle(64, top + 57, 23, UI_NAV_BACK_BORDER_GRAY, fb);
+    // 返回键用深一档的灰圆底，不再画圆环。
+    // The back control uses a darker gray disc, without a ring.
+    epd_fill_circle(64, top + 57, 24, 0xd0, fb);
     ui_draw_icon(fb, 64, top + 57, READER_SHEET_BACK_PX, UI_ICON_CHEVRON_LEFT, 0x38);
 }
 
 static void draw_pill_slider(uint8_t* fb, EpdRect r, const char* left, const char* right,
                              const char* value, int index, int count, int left_px, int right_px) {
+    // 滑轨和圆形把手都靠填充区分，不再描边。
+    // The rail and round knob separate by fill only, with no outline.
     ui_fill_round_rect(fb, r, r.height / 2, 0xb8);
-    ui_draw_control_frame(fb, r, r.height / 2, 0x50);
     int cy = r.y + r.height / 2;
     ui_text_box(fb,(EpdRect){r.x+12,cy-26,40,52},left_px,left,EPD_DRAW_ALIGN_CENTER,false);
     ui_text_box(fb,(EpdRect){r.x+r.width-52,cy-26,40,52},right_px,right,EPD_DRAW_ALIGN_CENTER,false);
@@ -1909,7 +2002,6 @@ static void draw_pill_slider(uint8_t* fb, EpdRect r, const char* left, const cha
     track.width = cx - track.x;
     if (track.width > 0) ui_fill_round_rect(fb, track, 3, 0x40);
     epd_fill_circle(cx, cy, 37, UI_GRAY_WHITE, fb);
-    epd_draw_circle(cx, cy, 37, 0x48, fb);
     ui_text_box(fb,(EpdRect){cx-31,cy-28,62,56},22,value,EPD_DRAW_ALIGN_CENTER,false);
 }
 
@@ -2008,7 +2100,6 @@ static void draw_background_directory(uint8_t *fb) {
     char count[32]; snprintf(count, sizeof(count), "%d 张图片", s_background_count);
     reader_panel_text(fb, 642, 303, 22, count, EPD_DRAW_ALIGN_RIGHT, false);
     ui_fill_round_rect(fb, (EpdRect){36,344,612,672}, 20, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, (EpdRect){36,344,612,672}, 20, 0x58);
     for (int row = 0; row < READER_BACKGROUND_ROWS; ++row) {
         int index = s_background_page * READER_BACKGROUND_ROWS + row;
         if (index >= s_background_count) break;
@@ -2041,7 +2132,6 @@ static void draw_background_picker(uint8_t *fb) {
     EpdRect preview = {157, 316, 369, 656}; // 9:16, matching the complete wallpaper canvas.
     ui_fill_rect_fast(preview, UI_GRAY_WHITE, fb);
     if (s_background_ready) ui_reader_background_paint(fb, preview, false);
-    ui_draw_control_frame(fb, preview, 0, UI_GRAY_BLACK);
     char name[128] = "暂无图片", position[48];
     if (s_background_count) {
         const char *base = strrchr(s_backgrounds[s_background_selected].path, '/');
@@ -2123,7 +2213,6 @@ static app_redraw_t reader_background_tick(void) {
 }
 static void draw_font_pair(uint8_t *fb, EpdRect card, const char *title, const char *value) {
     ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, card, 20, 0x70);
     ui_text_box(fb,(EpdRect){card.x+21,card.y+6,card.width-42,card.height/2-12},23,title,EPD_DRAW_ALIGN_LEFT,false);
     char shown[64]; copy_text(shown, sizeof(shown), value);
     if (!strcmp(title,"阅读字体")) fit_fixed_text(shown,ui_text_effective_px(27),card.width-76);
@@ -2148,23 +2237,22 @@ static void draw_font_settings(uint8_t* fb) {
     draw_font_pair(fb, s_layout_card, "排版设置", "边距 · 行距");
     const bool book_fonts = app_settings_book_fonts();
     EpdRect card = s_bookfont_card;
-    ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE); ui_draw_control_frame(fb, card, 20, 0x70);
+    ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
     ui_text_box(fb,(EpdRect){card.x+21,card.y+6,card.width-42,card.height/2-12},23,"书内自带字体",EPD_DRAW_ALIGN_LEFT,false);
     ui_text_box(fb,(EpdRect){card.x+21,card.y+card.height/2,card.width-122,card.height/2-8},27,book_fonts?"开启":"关闭",EPD_DRAW_ALIGN_LEFT,false);
     EpdRect toggle = {card.x+card.width-89,card.y+3*card.height/4-19,69,39};
     ui_fill_round_rect(fb, toggle, 19, book_fonts ? 0x38 : 0xd0);
     int knob = toggle.x + (book_fonts ? 49 : 20);
     epd_fill_circle(knob, toggle.y + 19, 16, UI_GRAY_WHITE, fb);
-    epd_draw_circle(knob, toggle.y + 19, 16, 0x78, fb);
     EpdRect rule = s_rule_card;
-    ui_fill_round_rect(fb, rule, 20, UI_GRAY_WHITE); ui_draw_control_frame(fb, rule, 20, 0x70);
+    ui_fill_round_rect(fb, rule, 20, UI_GRAY_WHITE);
     static const char *const rule_names[] = {"无", "虚线", "点线"};
     int selected_rule = app_settings_book_reading_line();
     ui_text_box(fb,(EpdRect){rule.x+22,rule.y+10,142,rule.height-20},25,"阅读线",EPD_DRAW_ALIGN_LEFT,false);
     ui_text_box(fb,(EpdRect){rule.x+172,rule.y+10,77,rule.height-20},25,rule_names[selected_rule],EPD_DRAW_ALIGN_RIGHT,false);
     ui_draw_icon(fb,rule.x+rule.width-24,rule.y+rule.height/2,27,UI_ICON_CHEVRON_RIGHT,0x38);
     EpdRect aa = s_antialias_card;
-    ui_fill_round_rect(fb, aa, 20, UI_GRAY_WHITE); ui_draw_control_frame(fb, aa, 20, 0x70);
+    ui_fill_round_rect(fb, aa, 20, UI_GRAY_WHITE);
     ui_text_box(fb,(EpdRect){aa.x+21,aa.y+10,aa.width-122,aa.height-20},25,"抗锯齿",EPD_DRAW_ALIGN_LEFT,false);
     draw_reading_switch(fb,(EpdRect){aa.x+aa.width-89,aa.y+aa.height/2-19,69,39},app_settings_book_antialias());
     ui_fill_round_rect(fb, (EpdRect){36, 1141, 612, 58}, 20, UI_GRAY_BLACK);
@@ -2186,9 +2274,10 @@ static void draw_weight_settings(uint8_t *fb) {
     ttf_set_stroke_adjust_fine(weight);
     ttf_draw_text_px(fb, 342, 833, 48, "阅读文字 Aa 123", EPD_DRAW_ALIGN_CENTER, 0, 15);
     ttf_set_stroke_adjust_fine(prior_weight);
-    ui_fill_round_rect(fb,(EpdRect){36,895,612,114},57,0xe0);
-    ui_draw_control_frame(fb,(EpdRect){36,895,612,114},57,0x30);
-    for(int i=0;i<2;++i){EpdRect control=reader_weight_rect(i);epd_fill_circle(control.x+43,952,43,UI_GRAY_WHITE,fb);ui_draw_control_frame(fb,control,43,0x30);}
+    // 字重条与加减圆钮都用填充分层，不再描边。
+    // The weight bar and plus/minus knobs layer by fill, without outlines.
+    ui_fill_round_rect(fb,(EpdRect){36,895,612,114},57,0xd0);
+    for(int i=0;i<2;++i){EpdRect control=reader_weight_rect(i);epd_fill_circle(control.x+43,952,43,UI_GRAY_WHITE,fb);}
     ui_fill_rect_fast((EpdRect){87,951,24,3},weight<=-APP_BOOK_WEIGHT_FINE_MAX?0xa0:0x20,fb);
     ui_fill_rect_fast((EpdRect){573,951,24,3},weight>=APP_BOOK_WEIGHT_FINE_MAX?0xa0:0x20,fb);
     ui_fill_rect_fast((EpdRect){584,941,3,24},weight>=APP_BOOK_WEIGHT_FINE_MAX?0xa0:0x20,fb);
@@ -2214,8 +2303,7 @@ static void draw_rule_settings(uint8_t *fb) {
     int selected = app_settings_book_reading_line();
     for (int i = 0; i < 3; ++i) {
         EpdRect card = rule_style_rect(i);
-        ui_fill_round_rect(fb, card, 20, selected == i ? 0xc8 : 0xe8);
-        ui_draw_control_frame(fb, card, 20, selected == i ? 0x40 : 0x78);
+        ui_fill_round_rect(fb, card, 20, selected == i ? 0xc8 : 0xf8);
         reader_panel_text_vc(fb, card.x + card.width / 2, card.y + 37, 24, names[i], EPD_DRAW_ALIGN_CENTER, false);
         if (i) {
             int span = i == 1 ? 14 : 3, step = i == 1 ? 24 : 13;
@@ -2230,8 +2318,7 @@ static void draw_rule_settings(uint8_t *fb) {
     const EpdRect controls[] = {s_rule_offset_up, s_rule_offset_reset, s_rule_offset_down};
     const char *const labels[] = {"上移 2px", "恢复居中", "下移 2px"};
     for (int i = 0; i < 3; ++i) {
-        ui_fill_round_rect(fb, controls[i], 20, selected ? 0xe0 : 0xf0);
-        ui_draw_control_frame(fb, controls[i], 20, selected ? 0x60 : 0xa0);
+        ui_fill_round_rect(fb, controls[i], 20, selected ? 0xd8 : 0xe8);
         reader_panel_text_vc(fb, controls[i].x + controls[i].width / 2,
                    controls[i].y + controls[i].height / 2, 22, labels[i], EPD_DRAW_ALIGN_CENTER, false);
     }
@@ -2276,7 +2363,6 @@ static void draw_layout_settings(uint8_t* fb) {
         EpdRect choice = {214 + i * 108, 970, 100, 64};
         bool selected = i == indent;
         ui_fill_round_rect(fb, choice, 16, selected ? UI_GRAY_BLACK : 0xe4);
-        ui_draw_control_frame(fb, choice, 16, selected ? UI_GRAY_BLACK : 0x98);
         ui_text_box(fb,(EpdRect){choice.x+8,choice.y+5,choice.width-16,choice.height-10},23,indent_names[i],EPD_DRAW_ALIGN_CENTER,selected);
     }
     ui_text_box(fb,(EpdRect){42,1050,154,64},24,"缩进微调",EPD_DRAW_ALIGN_LEFT,false);
@@ -2284,8 +2370,7 @@ static void draw_layout_settings(uint8_t* fb) {
     const char *labels[] = {"−", adjustment, "+"};
     for (int i = 0; i < 3; ++i) {
         EpdRect control = indent_adjust_rect(i);
-        ui_fill_round_rect(fb, control, 16, 0xf0);
-        ui_draw_control_frame(fb, control, 16, 0x50);
+        ui_fill_round_rect(fb, control, 16, 0xd8);
         ui_text_box(fb,(EpdRect){control.x+8,control.y+5,control.width-16,control.height-10},i==1?22:31,labels[i],EPD_DRAW_ALIGN_CENTER,false);
     }
     EpdRect back = {36, 1132, 612, 72};
@@ -2309,16 +2394,16 @@ static EpdRect reading_toggle_rect(int index) {
     return reading_setting_rect(index == 0 ? 3 : index == 1 ? 5 : index == 2 ? 6 : 7);
 }
 static void draw_reading_switch(uint8_t *fb, EpdRect track, bool on) {
+    // 开关靠轨道与白把手填充区分，不再给把手描边。
+    // The switch separates by the track and white knob fills, without a knob outline.
     ui_fill_round_rect(fb, track, 19, on ? 0x38 : 0xc4);
     int cx = track.x + (on ? 49 : 20);
     epd_fill_circle(cx, track.y + 19, 16, UI_GRAY_WHITE, fb);
-    epd_draw_circle(cx, track.y + 19, 16, 0x78, fb);
 }
 static void draw_reading_card(uint8_t *fb, int index, const char *title,
                               const char *value, bool cycle) {
     EpdRect card = reading_setting_rect(index);
     ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, card, 20, 0x68);
     ui_text_box(fb,(EpdRect){card.x+21,card.y+6,card.width-42,card.height/2-12},23,title,EPD_DRAW_ALIGN_LEFT,false);
     char shown[48]; copy_text(shown,sizeof(shown),value);
     ui_text_box(fb,(EpdRect){card.x+21,card.y+card.height/2,222,card.height/2-8},26,shown,EPD_DRAW_ALIGN_LEFT,false);
@@ -2329,7 +2414,6 @@ static void draw_reading_toggle(uint8_t *fb, int index, const char *title,
                                 const char *detail, bool on) {
     EpdRect row = reading_toggle_rect(index);
     ui_fill_round_rect(fb, row, 20, UI_GRAY_WHITE);
-    ui_draw_control_frame(fb, row, 20, 0x68);
     if (index == 2) {
         // 半宽格放两行：标题与说明各降一号字，开关仍留在右端。
         // A half-width cell carries two lines: title and detail step down a size, the switch stays right.
@@ -2368,12 +2452,9 @@ static void draw_turn_settings(uint8_t *fb) {
         int y = 370 + i * 322;
         bool selected = vertical == (i != 0);
         EpdRect card = {36, y, 612, 292};
-        ui_fill_round_rect(fb, card, 22, selected ? 0xe0 : 0xf0);
-        ui_draw_control_frame(fb, card, 22, 0x50);
-        ui_draw_control_frame(fb, (EpdRect){37, y + 1, 610, 290}, 21, 0x50);
+        ui_fill_round_rect(fb, card, 22, selected ? 0xc8 : 0xf8);
         EpdRect diagram = {64, y + 37, 182, 220};
         ui_fill_round_rect(fb, diagram, 12, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, diagram, 12, 0x58);
         if (i) {
             ui_hairline(fb, diagram.y + 73, 65, 180, 0x58);
             reader_panel_text_vc(fb, 155, diagram.y + 36, 21, "上一页", EPD_DRAW_ALIGN_CENTER, false);
@@ -2423,14 +2504,13 @@ static void draw_key_settings(uint8_t *fb) {
         } else ui_fill_round_rect(fb, (EpdRect){cx - 26, 415, 52, 6}, 3, UI_GRAY_BLACK);
         reader_panel_text_vc(fb, cx, 473, 22, names[i], EPD_DRAW_ALIGN_CENTER, false);
         EpdRect card = reader_key_card(i);
-        ui_fill_round_rect(fb, card, 20, 0xf0);
-        ui_draw_control_frame(fb, card, 20, 0x58);
+        ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
         ui_text_box(fb,(EpdRect){card.x+17,card.y+7,card.width-57,36},20,"单击",EPD_DRAW_ALIGN_LEFT,false);
         ui_text_box(fb,(EpdRect){card.x+12,card.y+52,card.width-24,52},24,reader_key_label(app_settings_reader_key_action(i)),EPD_DRAW_ALIGN_CENTER,false);
         ui_draw_icon(fb, card.x + card.width - 23, card.y + 24, 20, UI_ICON_CHEVRON_DOWN, 0x38);
     }
     EpdRect hold = {36, 646, 612, 96};
-    ui_fill_round_rect(fb, hold, 20, 0xf0); ui_draw_control_frame(fb, hold, 20, 0x58);
+    ui_fill_round_rect(fb, hold, 20, UI_GRAY_WHITE);
     ui_text_box(fb,(EpdRect){58,652,238,48},26,"中键长按",EPD_DRAW_ALIGN_LEFT,false);
     ui_text_box(fb,(EpdRect){322,652,270,48},25,reader_key_label(app_settings_reader_hold_action()),EPD_DRAW_ALIGN_RIGHT,false);
     ui_draw_icon(fb, 625, 679, 20, UI_ICON_CHEVRON_DOWN, 0x38);
@@ -2440,7 +2520,6 @@ static void draw_key_settings(uint8_t *fb) {
         EpdRect card = reader_key_preset_card(preset);
         bool selected = reader_key_preset_selected(preset);
         ui_fill_round_rect(fb, card, 20, selected ? 0xd8 : UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, card, 20, 0x58);
         char title[32]; snprintf(title, sizeof(title), "推荐设置 %u", preset);
         ui_text_box(fb,(EpdRect){58,card.y+7,344,49},26,title,EPD_DRAW_ALIGN_LEFT,false);
         ui_text_box(fb,(EpdRect){435,card.y+7,186,49},20,selected?"已应用":"点击应用",EPD_DRAW_ALIGN_RIGHT,false);
@@ -2458,7 +2537,6 @@ static void draw_key_picker(uint8_t *fb) {
         EpdRect card = {36, 390 + i * 94, 612, 78};
         bool selected = (s_reader_key_pick == 3 ? app_settings_reader_hold_action() : app_settings_reader_key_action(s_reader_key_pick)) == i;
         ui_fill_round_rect(fb, card, 20, selected ? 0xd8 : UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, card, 20, 0x58);
         reader_panel_text_vc(fb, 58, card.y + 39, 27, reader_key_label(i), EPD_DRAW_ALIGN_LEFT, false);
         epd_draw_circle(608, card.y + 39, 11, 0x38, fb);
         if (selected) epd_fill_circle(608, card.y + 39, 6, UI_GRAY_BLACK, fb);
@@ -2494,8 +2572,7 @@ static void draw_font_picker(uint8_t* fb) {
         const ttf_font_item_t* item = ttf_font_item(start + slot);
         EpdRect card = reader_font_pick_rect(slot);
         bool selected = !strcmp(active, item->path);
-        ui_fill_round_rect(fb, card, 18, selected ? 0xc2 : 0xe4);
-        ui_draw_control_frame(fb, card, 18, selected ? 0x48 : 0x98);
+        ui_fill_round_rect(fb, card, 18, selected ? 0xc2 : 0xf8);
         char label[TTF_FONT_NAME_MAX];
         copy_text(label, sizeof(label), font_friendly_name(item));
         if (ttf_font_open(item->path) == ESP_OK) {
@@ -2542,8 +2619,8 @@ static void draw_reader_stats(uint8_t* fb) {
         reader_panel_text(fb, 630, top + 272, 19, "总页数 —", EPD_DRAW_ALIGN_RIGHT, false);
     }
     EpdRect details = {36, top + 319, 294, 78}, recent = {354, top + 319, 294, 78};
-    ui_fill_round_rect(fb, details, 20, 0xd8); ui_draw_control_frame(fb, details, 20, 0x68);
-    ui_fill_round_rect(fb, recent, 20, 0xd8); ui_draw_control_frame(fb, recent, 20, 0x68);
+    ui_fill_round_rect(fb, details, 20, 0xd8);
+    ui_fill_round_rect(fb, recent, 20, 0xd8);
     char marks[32]; snprintf(marks, sizeof(marks), "查看书签 · %u", (unsigned)bookmark_count());
     ui_text_box(fb,(EpdRect){48,top+331,270,54},24,marks,EPD_DRAW_ALIGN_CENTER,false);
     ui_text_box(fb,(EpdRect){366,top+331,270,54},24,"最近 30 天",EPD_DRAW_ALIGN_CENTER,false);
@@ -2560,8 +2637,9 @@ static void draw_reader_bookmarks(uint8_t* fb) {
     if (s_bookmark_page >= pages) s_bookmark_page = pages - 1;
     if (valid && marks.count) {
         EpdRect manage = {544, top + 30, 104, 54};
-        ui_fill_round_rect(fb, manage, 20, s_bookmark_edit ? 0xd8 : 0xe8);
-        ui_draw_control_frame(fb, manage, 20, 0x78);
+        // 管理键靠灰底深浅区分：进入编辑后更深一档。
+        // The manage control separates by fill tone: deeper once editing starts.
+        ui_fill_round_rect(fb, manage, 20, s_bookmark_edit ? 0xb8 : 0xd8);
         reader_panel_text_vc(fb, 596, top + 57, 20, s_bookmark_edit ? "完成" : "管理", EPD_DRAW_ALIGN_CENTER, false);
     }
     if (!valid || !marks.count) {
@@ -2576,8 +2654,7 @@ static void draw_reader_bookmarks(uint8_t* fb) {
         EpdRect item = bookmark_row_rect(row);
         bool current = mark->chapter == s_chapter && mark->byte_off == book_layout_page_start_offset(s_page);
         bool selected = s_bookmark_edit && (s_bookmark_selected & (UINT32_C(1) << newest));
-        ui_fill_round_rect(fb, item, 14, selected ? 0xc0 : current ? 0xc8 : 0xe8);
-        ui_draw_control_frame(fb, item, 14, current ? 0x50 : 0x98);
+        ui_fill_round_rect(fb, item, 14, selected ? 0xc0 : current ? 0xc8 : 0xf8);
         char chapter[96];
         if (book_chapter_title(mark->chapter, chapter, sizeof(chapter)) != ESP_OK)
             snprintf(chapter, sizeof(chapter), "第 %u 节", (unsigned)mark->chapter + 1);
@@ -2610,7 +2687,6 @@ static void draw_reader_bookmarks(uint8_t* fb) {
     if (s_bookmark_delete_confirm) {
         EpdRect panel = {54, top + 196, 576, 240};
         ui_fill_round_rect(fb, panel, 24, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, panel, 24, 0x48);
         reader_panel_text_vc(fb, 342, top + 252, 27,
                    s_bookmark_delete_error ? "删除失败，请重试" : "删除选中的书签？", EPD_DRAW_ALIGN_CENTER, false);
         reader_panel_text_vc(fb, 342, top + 298, 18, "只删除书签，不影响阅读进度", EPD_DRAW_ALIGN_CENTER, false);
@@ -2654,8 +2730,23 @@ static void draw_reader_panel(uint8_t* fb) {
     if (s_reader_panel==READER_PANEL_NONE) return;
     ui_text_set_system_scale(true);
     if (s_reader_panel == READER_PANEL_TOOLS) {
-        ui_fill_rect_fast((EpdRect){0, 1096, UI_LOCK_WIDTH, 120}, UI_GRAY_WHITE, fb);
-        ui_hairline(fb, 1096, 0, UI_LOCK_WIDTH, 0x98);
+        // 工具栏和底栏同一条带子（1096..1216），用同一块液态玻璃材质：模糊 + 边框折射 + 亮边。
+        // 它读的是 fb 里已有的正文，所以必须在正文画完之后调用。
+        // The toolbar shares the dock's band (1096..1216) and the same liquid glass: blur, bezel
+        // refraction and a rim. It reads the body text already in fb, so it must run after it.
+        // 胶囊 + 白色层：白色叠上去才能压住正文、让图标和标签看得清。
+        // Capsule plus a white layer: the white is what holds the body text back so icons and
+        // labels stay legible.
+        ui_nav_glass_panel(fb, (EpdRect){READER_TOOL_X, READER_TOOL_TOP, READER_TOOL_W, READER_TOOL_H},
+                           // 白层 70%：底下是正文，只有把玻璃拉到接近白，黑图标才立得起来。
+                           // White at 70%: body text sits underneath, and only near-white glass lets
+                           // black icons stand out.
+                           // 白层 20%：70% 会把玻璃压成一张白纸；20% 几乎只剩玻璃本身，可读性完全靠下限 0x90 兜。
+                           // White at 20%: at 70% the glass flattened into plain paper and
+                           // neither refraction nor blur could be seen.
+                           // 折射 100%：阅读工具栏保持默认折射范围。
+                           // Refraction 100%: the reader toolbar keeps the default refraction range.
+                           READER_TOOL_H / 2, 20, 100);
         const char* labels[] = {"目录", "书签", "阅读统计", "阅读设置", "字体设置"};
         for (int i = 0; i < BOOK_TOOL_COUNT; ++i) {
             EpdRect rect = tool_rect(i);
@@ -3036,6 +3127,9 @@ static void render(app_ctx_t* ctx, uint8_t* fb) {
     if (s_view == BULK) { draw_bulk(fb, ctx->leaf); unlock_draw(); return; }
     if (s_view == MANAGE) {
         ui_clear_page(fb);
+        // 详情页也用灰底 + 白面板，与书架、管理页同一套分层。
+        // The detail page uses the gray ground and a white panel, matching the shelf and management pages.
+        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
         ui_nav_status(fb);
         ui_nav_back(fb, 36, 79);
         ui_text_vc(fb, 342, 107, 34, "图书详情", EPD_DRAW_ALIGN_CENTER, false);
@@ -3067,11 +3161,18 @@ static void draw_shelf_page(app_ctx_t* ctx, uint8_t* fb) {
     ui_clear_page(fb);
     // 普通和水波纹共享灰阶画面，只有快刷使用黑白底色。
     // Normal and ripple share gray artwork; only fast refresh uses the BW background.
-    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_NAV_TOP},
+    // 灰底一直铺到屏幕下沿：底栏是动态毛玻璃，下面露白会和胶囊里的模糊对不上。
+    // The gray background runs all the way to the bottom: the dock is dynamic frosted glass, and
+    // leaving white under it would not match what the pill blurs.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT},
                   app_settings_main_fast_refresh() ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     char category_title[BOOK_STORE_PATH_MAX];
-    copy_text(category_title,sizeof(category_title),s_category_selected ? shelf_category_name(s_category_selected) : "书库");
+    // 已读完是分类弹窗的固定项，选中时标题也跟着变成它，否则仍显示当前分类名。
+    // Finished is the popup's fixed row, so the title follows it when selected and otherwise keeps
+    // showing the current category name.
+    if (s_category_finished) copy_text(category_title,sizeof(category_title),"已读完");
+    else copy_text(category_title,sizeof(category_title),s_category_selected ? shelf_category_name(s_category_selected) : "书库");
     fit_text(category_title,SHELF_TITLE_PX,shelf_title_rect().width);
     ui_text_title_vc(fb, SHELF_TITLE_X, SHELF_TITLE_CENTER_Y, SHELF_TITLE_PX, category_title,
                      category_title, EPD_DRAW_ALIGN_LEFT);
@@ -3081,12 +3182,17 @@ static void draw_shelf_page(app_ctx_t* ctx, uint8_t* fb) {
     draw_shelf_action(fb, shelf_manage_rect(), UI_ICON_SQUARE_MENU, 114);
     draw_shelf_action(fb, shelf_category_rect(), UI_ICON_TEXT_ALIGN_START, 118);
     draw_shelf_action(fb, shelf_import_rect(), UI_ICON_ARROW_DOWN_TO_LINE, 115);
-    if (s_message[0] || s_shelf_warning[0])
-        ui_text(fb, UI_MARGIN, 991, 17, s_message[0] ? s_message : s_shelf_warning,
-                EPD_DRAW_ALIGN_LEFT, false);
+    // 普通和已读完各自给一句空状态：已读完为空不等于整座书架没有书。
+    // Each view gets its own empty line: an empty finished group must not claim the whole shelf is empty.
+    const char *footer = s_message[0] ? s_message : s_shelf_warning;
+    if (s_category_finished && !s_visible_count) footer = "还没有标记为已读完的书";
+    if (footer[0])
+        ui_text(fb, UI_MARGIN, 991, 17, footer, EPD_DRAW_ALIGN_LEFT, false);
     if (app_settings_shelf_style() == 5) {
+        // 列表书架的整块白底直接放在灰页面上，不再描边；行间的灰色分隔线负责分项。
+        // The list shelf's white block sits on the gray page without an outline; its gray row rules
+        // separate the entries.
         ui_fill_round_rect(fb, (EpdRect){36,184,612,788}, 20, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, (EpdRect){36,184,612,788}, 20, 0x50);
     }
     for (int row = 0; row < shelf_rows(); ++row) {
         int i = ctx->leaf * shelf_rows() + row;
@@ -3801,6 +3907,13 @@ static bool open_book_impl(app_ctx_t* ctx, const char* path) {
     // Opening puts the book back on the shelf: removal only hides the entry, and reading it
     // again is the signal that it belongs there.
     if (shelf_hidden_load(s_path)) (void)shelf_hidden_save(s_path, false);
+    // 已读完和“从继续阅读移除”同理：再打开就说明又在读它，两个标记一起撤掉，
+    // 书回到普通分类和首页继续阅读；否则误标的书没有回去的路。
+    // Finished and "removed from continue reading" follow the same rule: opening the book again
+    // means it is being read, so both flags are cleared and it returns to the ordinary groups and
+    // the Home strip; otherwise a mis-marked book would have no way back.
+    if (shelf_flag_load(s_path, 'f')) (void)app_book_set_finished(s_path, false);
+    if (shelf_flag_load(s_path, 'r')) (void)app_book_set_resume_hidden(s_path, false);
     ESP_LOGI(TAG, "opened kind=%d chapters=%u pages=%u px=%d", book_kind(), (unsigned)book_chapter_count(), (unsigned)book_layout_page_count(), s_px);
     return true;
 }
@@ -3853,6 +3966,7 @@ static void shelf_category_init(void) {
     if (strcmp(s_category_root,root)) {
         free(s_categories); s_categories=NULL;
         s_category_count=s_category_capacity=s_category_selected=s_category_menu_page=0;
+        s_category_finished=false; s_finished_count=0; s_finished_pages[0]=s_finished_pages[1]=0;
         copy_text(s_category_root,sizeof(s_category_root),root);
         s_shelf_cache_valid=false;
     }
@@ -3878,20 +3992,30 @@ static bool shelf_category_matches(const char *path) {
     return !strncmp(path,s_categories[s_category_selected].path,size) && path[size]=='/';
 }
 static void shelf_category_remember(app_ctx_t *ctx) {
-    if (s_categories && s_view==SHELF && !s_scan_pending)
-        s_categories[s_category_selected].pages[app_settings_shelf_style()==5]=ctx->leaf;
+    if (!s_categories || s_view!=SHELF || s_scan_pending) return;
+    // 已读完是弹窗顶部的固定项，页码与分类分开记，切来切去都回到各自的页。
+    // Finished is the fixed row of the popup: its page is remembered separately from the category,
+    // so switching between the two returns each one to its own page.
+    if (s_category_finished) s_finished_pages[app_settings_shelf_style()==5]=ctx->leaf;
+    else s_categories[s_category_selected].pages[app_settings_shelf_style()==5]=ctx->leaf;
 }
 static void shelf_category_restore(app_ctx_t *ctx) {
     int layout=app_settings_shelf_style()==5;
-    int saved=s_categories ? s_categories[s_category_selected].pages[layout] : 0;
+    int saved=s_category_finished ? s_finished_pages[layout]
+             : s_categories ? s_categories[s_category_selected].pages[layout] : 0;
     ctx->leaf=book_shelf_saved_page(saved,s_visible_count,shelf_rows());
-    if (s_categories) s_categories[s_category_selected].pages[layout]=ctx->leaf;
+    if (s_category_finished) s_finished_pages[layout]=ctx->leaf;
+    else if (s_categories) s_categories[s_category_selected].pages[layout]=ctx->leaf;
 }
 static void shelf_categories_recount(void) {
     if (!s_categories) return;
     for (int i=0;i<s_category_count;++i) s_categories[i].count=0;
+    s_finished_count=0;
     for (int i=0;i<s_count;++i) {
         if (s_shelf[i].removed) continue;
+        // 已读完的书不进普通分类的计数，只进顶部固定项的计数。
+        // Finished books stay out of every ordinary count and only feed the fixed row.
+        if (s_shelf[i].finished) { ++s_finished_count; continue; }
         ++s_categories[0].count;
         char child[BOOK_STORE_PATH_MAX],path[BOOK_STORE_PATH_MAX];
         if (!book_shelf_child(s_category_root,s_shelf[i].path,child,sizeof(child))) {
@@ -3921,8 +4045,15 @@ static int category_rows_visible(void) {
     if (count>SHELF_CATEGORY_ROWS) count=SHELF_CATEGORY_ROWS;
     return count<1 ? 1 : count;
 }
+// 弹窗第一行固定是“已读完”，按下才是可分页的书库分类；固定项不跟分类翻页走。
+// The popup pins "finished" as its first row; the paged library categories follow it, and the fixed
+// row never scrolls with them.
+#define CATEGORY_FIXED_ROWS 1
+static bool category_footer_visible(void) {
+    return shelf_category_available()>SHELF_CATEGORY_ROWS;
+}
 static EpdRect shelf_category_box(void) {
-    const int rows=category_rows_visible()+(shelf_category_available()>SHELF_CATEGORY_ROWS ? 1 : 0);
+    const int rows=CATEGORY_FIXED_ROWS+category_rows_visible()+(category_footer_visible() ? 1 : 0);
     int left=shelf_category_rect().x+SHELF_ACTION_SIDE-CATEGORY_MENU_W;
     if (left<8) left=8;
     return (EpdRect){left,CATEGORY_MENU_TOP,CATEGORY_MENU_W,2*CATEGORY_MENU_PAD_V+rows*CATEGORY_ROW_H};
@@ -3931,31 +4062,44 @@ static EpdRect category_row_rect(int row) {
     const EpdRect box=shelf_category_box();
     return (EpdRect){box.x,box.y+CATEGORY_MENU_PAD_V+row*CATEGORY_ROW_H,box.width,CATEGORY_ROW_H};
 }
+static EpdRect category_choice_rect(int row) { return category_row_rect(CATEGORY_FIXED_ROWS+row); }
+static EpdRect category_footer_rect(void) {
+    return category_row_rect(CATEGORY_FIXED_ROWS+category_rows_visible());
+}
+static void draw_category_row(uint8_t *fb, const EpdRect *r, ui_icon_t icon, const char *name,
+                              int count, int selected) {
+    const int center=r->y+r->height/2;
+    if (selected)
+        ui_fill_round_rect(fb,(EpdRect){r->x+CATEGORY_MENU_PAD_H/2,r->y+4,
+                                        r->width-CATEGORY_MENU_PAD_H,r->height-8},18,0xd0);
+    ui_draw_icon(fb,r->x+CATEGORY_MENU_PAD_H+17,center,34,icon,UI_GRAY_BLACK);
+    char label[BOOK_STORE_PATH_MAX],number[24];
+    snprintf(number,sizeof(number),"%d",count);
+    int name_width=CATEGORY_MENU_W-2*CATEGORY_MENU_PAD_H-34-18-64;
+    if (name_width<60) name_width=60;
+    copy_text(label,sizeof(label),name); fit_text(label,28,name_width);
+    ui_text_fixed_vc(fb,r->x+CATEGORY_MENU_PAD_H+34+18,center,28,label,EPD_DRAW_ALIGN_LEFT,false);
+    ui_text_fixed_vc(fb,r->x+r->width-CATEGORY_MENU_PAD_H,center,22,number,EPD_DRAW_ALIGN_RIGHT,false);
+}
 static void draw_category_menu(uint8_t *fb) {
     const EpdRect box=shelf_category_box();
+    ui_draw_popup_shadow(fb,box,CATEGORY_MENU_RADIUS);
     ui_fill_round_rect(fb,box,CATEGORY_MENU_RADIUS,CATEGORY_MENU_FILL);
-    ui_draw_control_frame(fb,box,CATEGORY_MENU_RADIUS,CATEGORY_MENU_FRAME);
+    // 顶部固定项：任何时候都在第一行，分类翻页不动它。
+    // The fixed top row: always first, untouched by category paging.
+    const EpdRect fixed=category_row_rect(0);
+    draw_category_row(fb,&fixed,UI_ICON_CIRCLE_CHECK,"已读完",s_finished_count,s_category_finished);
     const int visible=category_rows_visible();
     for (int row=0;row<visible;++row) {
         int index=shelf_category_at(s_category_menu_page*SHELF_CATEGORY_ROWS+row);
         if (index<0) break;
-        const EpdRect r=category_row_rect(row);
-        const int center=r.y+r.height/2;
-        if (index==s_category_selected)
-            ui_fill_round_rect(fb,(EpdRect){r.x+CATEGORY_MENU_PAD_H/2,r.y+4,
-                                            r.width-CATEGORY_MENU_PAD_H,r.height-8},18,0xd0);
-        ui_draw_icon(fb,r.x+CATEGORY_MENU_PAD_H+17,center,34,
-                     index<2?UI_ICON_LIBRARY_BIG:UI_ICON_FOLDER_OPEN,UI_GRAY_BLACK);
-        char name[BOOK_STORE_PATH_MAX],count[24];
-        snprintf(count,sizeof(count),"%d",s_categories[index].count);
-        int name_width=CATEGORY_MENU_W-2*CATEGORY_MENU_PAD_H-34-18-64;
-        if (name_width<60) name_width=60;
-        copy_text(name,sizeof(name),shelf_category_name(index)); fit_text(name,28,name_width);
-        ui_text_fixed_vc(fb,r.x+CATEGORY_MENU_PAD_H+34+18,center,28,name,EPD_DRAW_ALIGN_LEFT,false);
-        ui_text_fixed_vc(fb,r.x+r.width-CATEGORY_MENU_PAD_H,center,22,count,EPD_DRAW_ALIGN_RIGHT,false);
+        const EpdRect r=category_choice_rect(row);
+        draw_category_row(fb,&r,index<2?UI_ICON_LIBRARY_BIG:UI_ICON_FOLDER_OPEN,
+                          shelf_category_name(index),s_categories[index].count,
+                          !s_category_finished && index==s_category_selected);
     }
-    if (shelf_category_available()>SHELF_CATEGORY_ROWS) {
-        const EpdRect r=category_row_rect(visible);
+    if (category_footer_visible()) {
+        const EpdRect r=category_footer_rect();
         const int center=r.y+r.height/2;
         char pages[24]; snprintf(pages,sizeof(pages),"%d / %d",s_category_menu_page+1,
             (shelf_category_available()+SHELF_CATEGORY_ROWS-1)/SHELF_CATEGORY_ROWS);
@@ -3966,6 +4110,12 @@ static void draw_category_menu(uint8_t *fb) {
     }
 }
 static bool shelf_matches(const shelf_entry_t* item) {
+    // 已读完自成一个视图：普通分类里看不到它，它自己也只收已读完的书。
+    // Finished is a view of its own: ordinary groups never show such a book, and the view holds
+    // nothing else.
+    if (item->finished != s_category_finished) return false;
+    if (s_category_finished)
+        return item->search_match && (s_filter == 0 || (s_filter == 1 && !item->is_flash) || (s_filter == 2 && item->is_flash));
     return shelf_category_matches(item->path) && item->search_match && (s_filter == 0 || (s_filter == 1 && !item->is_flash) || (s_filter == 2 && item->is_flash));
 }
 static int compare_books(const void* a, const void* b) {
@@ -4005,13 +4155,25 @@ static app_redraw_t shelf_category_gesture(app_ctx_t *ctx, const ui_gesture_even
             const int visible=category_rows_visible();
             const int first=previous.y+CATEGORY_MENU_PAD_V;
             const int row=((int)ev->y0-first)/CATEGORY_ROW_H;
-            bool footer=pages>1 && ev->y0>=first+visible*CATEGORY_ROW_H;
+            const int footer_row=CATEGORY_FIXED_ROWS+visible;
+            bool footer=pages>1 && row>=footer_row;
             if (footer) direction=ev->x0<previous.x+previous.width/2 ? -1 : 1;
-            else {
-                int index=ev->y0>=first && row<visible
-                    ? shelf_category_at(s_category_menu_page*SHELF_CATEGORY_ROWS+row) : -1;
+            else if (row==0 && ev->y0>=first) {
+                // 固定项“已读完”：已经在这个视图里就只收起弹窗，否则切过去并记住原分类的页。
+                // The fixed "finished" row: a repeat tap only closes the popup, otherwise switch to
+                // the view and remember the page of the category being left.
+                if (!s_category_finished) {
+                    shelf_category_remember(ctx); s_category_finished=true;
+                    clear_selection(); sort_shelf(ctx); shelf_category_restore(ctx);
+                    s_category_menu=false;
+                    return APP_REDRAW_PAGE;
+                }
+                s_category_menu=false;
+            } else {
+                int index=ev->y0>=first && row>=CATEGORY_FIXED_ROWS && row<footer_row
+                    ? shelf_category_at(s_category_menu_page*SHELF_CATEGORY_ROWS+row-CATEGORY_FIXED_ROWS) : -1;
                 if (index>=0) {
-                    shelf_category_remember(ctx); s_category_selected=index;
+                    shelf_category_remember(ctx); s_category_finished=false; s_category_selected=index;
                     s_category_menu=false; clear_selection(); sort_shelf(ctx); shelf_category_restore(ctx);
                     return APP_REDRAW_PAGE;
                 }
@@ -4078,7 +4240,7 @@ typedef struct {
     char path[BOOK_STORE_PATH_MAX];
 } shelf_scan_frame_t;
 static void scan_shelf_dir(app_ctx_t *ctx, const char *root, bool is_flash, nvs_handle_t favorites,
-                           nvs_handle_t hidden, bool *truncated, bool *unreadable,
+                           nvs_handle_t shelf_flags, bool *truncated, bool *unreadable,
                            bool *skipped) {
     if (*truncated) return;
     shelf_scan_frame_t *frames = heap_caps_calloc(BOOK_SCAN_DEPTH_LIMIT + 1, sizeof(*frames),
@@ -4123,7 +4285,7 @@ static void scan_shelf_dir(app_ctx_t *ctx, const char *root, bool is_flash, nvs_
         // 显式移出书架的书不再列入；文件仍在存储卡上，随时可以重新读回书架。
         // Books the user removed stay off the shelf; the file stays on the card and reading it
         // again puts it back.
-        if (hidden && shelf_hidden_read_handle(hidden, path)) continue;
+        if (shelf_flags && shelf_hidden_read_handle(shelf_flags, path)) continue;
         if (strlen(ent->d_name) >= sizeof(((shelf_entry_t *)0)->name) ||
             st.st_size < 0 || (uint64_t)st.st_size > UINT32_MAX) { *skipped = true; continue; }
         if (!shelf_reserve()) { *truncated = true; break; }
@@ -4150,6 +4312,7 @@ static void scan_shelf_dir(app_ctx_t *ctx, const char *root, bool is_flash, nvs_
         item->chapter = item->has_progress ? p.chapter : 0;
         item->recent = item->has_progress ? p.last_open_s : 0;
         item->favorite = favorites && favorite_read_handle(favorites, item->path);
+        item->finished = shelf_flags && shelf_finished_read_handle(shelf_flags, item->path);
         s_shelf[s_count++] = candidate;
     }
     for (int i = 0; i <= depth; ++i)
@@ -4164,7 +4327,7 @@ static void scan_shelf_dir(app_ctx_t *ctx, const char *root, bool is_flash, nvs_
 // contents were replaced, stay off the shelf, matching the rule that changed sizes never resume.
 typedef struct {
     nvs_handle_t favorites;
-    nvs_handle_t hidden;
+    nvs_handle_t shelf_flags;
     bool truncated;
 } shelf_backfill_t;
 
@@ -4177,7 +4340,7 @@ static bool shelf_backfill_visit(const char* path, const book_progress_t* progre
     if (stat(path, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size < 0 ||
         (uint64_t)st.st_size > UINT32_MAX || (uint32_t)st.st_size != progress->file_size)
         return true;
-    if (scan->hidden && shelf_hidden_read_handle(scan->hidden, path)) return true;
+    if (scan->shelf_flags && shelf_hidden_read_handle(scan->shelf_flags, path)) return true;
     const char* base = strrchr(path, '/');
     base = base ? base + 1 : path;
     if (strlen(base) >= sizeof(((shelf_entry_t*)0)->name)) return true;
@@ -4205,6 +4368,7 @@ static bool shelf_backfill_visit(const char* path, const book_progress_t* progre
     item->recent = progress->last_open_s;
     item->search_match = read_pico_search_match(item->name, s_query);
     item->favorite = scan->favorites && favorite_read_handle(scan->favorites, item->path);
+    item->finished = scan->shelf_flags && shelf_finished_read_handle(scan->shelf_flags, item->path);
     s_shelf[s_count++] = candidate;
     return true;
 }
@@ -4216,14 +4380,14 @@ static bool shelf_backfill_visit(const char* path, const book_progress_t* progre
 // or a freshly read book stays invisible until a manual rescan.
 static bool shelf_backfill_read_books(bool* truncated) {
     nvs_handle_t favorites = 0;
-    nvs_handle_t hidden = 0;
+    nvs_handle_t shelf_flags = 0;
     (void)nvs_open("rp_favs", NVS_READONLY, &favorites);
-    (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &hidden);
+    (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &shelf_flags);
     const int before = s_count;
-    shelf_backfill_t backfill = {.favorites = favorites, .hidden = hidden};
+    shelf_backfill_t backfill = {.favorites = favorites, .shelf_flags = shelf_flags};
     (void)book_progress_list(shelf_backfill_visit, &backfill);
     if (favorites) nvs_close(favorites);
-    if (hidden) nvs_close(hidden);
+    if (shelf_flags) nvs_close(shelf_flags);
     if (truncated && backfill.truncated) *truncated = true;
     return s_count != before;
 }
@@ -4243,9 +4407,9 @@ static void scan_shelf(app_ctx_t* ctx) {
     esp_err_t root_err = book_store_roots(roots, &n);
     bool truncated = false, unreadable = root_err != ESP_OK || book_store_roots_degraded(), skipped = false;
     nvs_handle_t favorites = 0;
-    nvs_handle_t hidden = 0;
+    nvs_handle_t shelf_flags = 0;
     (void)nvs_open("rp_favs", NVS_READONLY, &favorites);
-    (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &hidden);
+    (void)nvs_open(SHELF_HIDDEN_NS, NVS_READONLY, &shelf_flags);
     s_storage[0] = 0;
     for (int i = 0; i < n; ++i) {
         if (i == 0 || roots[i].is_flash || roots[i - 1].is_flash) {
@@ -4255,12 +4419,12 @@ static void scan_shelf(app_ctx_t* ctx) {
             strncat(s_storage, capacity, sizeof(s_storage) - strlen(s_storage) - 1);
         }
         if (s_view == SHELF && app_poll_main_navigation(ctx)) break;
-        scan_shelf_dir(ctx, roots[i].path, roots[i].is_flash, favorites, hidden,
+        scan_shelf_dir(ctx, roots[i].path, roots[i].is_flash, favorites, shelf_flags,
                        &truncated, &unreadable, &skipped);
     }
     if (ctx->request_app) {
         if (favorites) nvs_close(favorites);
-        if (hidden) nvs_close(hidden);
+        if (shelf_flags) nvs_close(shelf_flags);
         s_shelf_cache_valid = false; s_scan_pending = true;
         return;
     }
@@ -4278,7 +4442,7 @@ static void scan_shelf(app_ctx_t* ctx) {
         s_shelf[i].search_match = read_pico_search_match(p->entry.name, s_query);
     }
     if (favorites) nvs_close(favorites);
-    if (hidden) nvs_close(hidden);
+    if (shelf_flags) nvs_close(shelf_flags);
     // 补齐书根目录之外读过的书；显式移出书架的除外。
     // Backfill books read outside the roots, minus the ones removed from the shelf.
     (void)shelf_backfill_read_books(&truncated);
@@ -4308,6 +4472,7 @@ static void scan_shelf(app_ctx_t* ctx) {
     s_cache_shelf_style = app_settings_shelf_style();
     s_store_revision = book_store_revision();
     s_progress_revision = progress_revision;
+    s_flags_scanned = s_shelf_flag_revision;
     s_shelf_cache_valid = !unreadable && !truncated;
     ESP_LOGI(TAG, "shelf books=%d roots=%d", s_count, n);
 }
@@ -4344,7 +4509,8 @@ static void refresh_cached_progress(app_ctx_t* ctx) {
     if (s_view==SHELF) shelf_category_restore(ctx);
 }
 static void return_to_cached_shelf(app_ctx_t* ctx) {
-    if (s_shelf_cache_valid && s_store_revision == book_store_revision()) refresh_cached_progress(ctx);
+    if (s_shelf_cache_valid && s_store_revision == book_store_revision() &&
+        s_flags_scanned == s_shelf_flag_revision) refresh_cached_progress(ctx);
     else scan_shelf(ctx);
 }
 
@@ -4403,6 +4569,8 @@ static void manage_apply(app_ctx_t* ctx) {
         s_shelf[write++] = s_shelf[i];
     }
     s_count = write;
+    // 删除或清进度后条目数变了，弹窗计数要重算。/ Deletion changes the counts shown in the popup.
+    shelf_categories_recount();
     sort_shelf(ctx);
     ctx->leaf = leaf < leaves() ? leaf : leaves() - 1;
 }
@@ -5362,6 +5530,10 @@ static void batch_apply(app_ctx_t* ctx) {
     }
     s_count = write;
     refresh_capacity();
+    // 条目被移出后分类与固定项的计数必须跟着减，否则弹窗数字会停在上一次扫描。
+    // Removing entries has to shrink the category and fixed-row counts, or the popup keeps the
+    // numbers from the last full scan.
+    shelf_categories_recount();
     int leaf = ctx->leaf;
     sort_shelf(ctx);
     ctx->leaf = leaf < leaves() ? leaf : leaves() - 1;
@@ -5680,7 +5852,9 @@ static void on_enter(app_ctx_t* ctx) {
     s_reader_return_home = false;
     s_requested_manage = false;
     s_presented_view = -1;
-    ctx->leaf = s_view==SHELF && s_categories ? s_categories[s_category_selected].pages[app_settings_shelf_style()==5] : 0;
+    ctx->leaf = s_view!=SHELF ? 0
+              : s_category_finished ? s_finished_pages[app_settings_shelf_style()==5]
+              : s_categories ? s_categories[s_category_selected].pages[app_settings_shelf_style()==5] : 0;
     s_px = app_settings_book_px();
     s_recent_sort = app_settings_shelf_recent_sort();
     s_margin = app_settings_book_margin();
@@ -5702,7 +5876,8 @@ static void on_enter(app_ctx_t* ctx) {
     bool reuse = s_shelf_cache_valid && media_err != ESP_ERR_NOT_FINISHED &&
                  sd.present == s_cache_sd_present && sd.mounted == s_cache_sd_mounted &&
                  s_cache_shelf_style == app_settings_shelf_style() &&
-                 s_store_revision == book_store_revision();
+                 s_store_revision == book_store_revision() &&
+                 s_flags_scanned == s_shelf_flag_revision;
     s_scan_pending = !reuse;
     if (reuse) {
         refresh_cached_progress(ctx);
@@ -5757,6 +5932,7 @@ static void book_on_media_lost(app_ctx_t* ctx) {
     free(s_editor_cover); s_editor_cover = NULL;
     s_view = SHELF;
     s_count = s_visible_count = 0;
+    s_finished_count = 0;
     s_shelf_cache_valid = false;
     free(s_shelf); s_shelf = NULL; s_shelf_capacity = 0;
     invalidate_covers();

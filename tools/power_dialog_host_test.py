@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""中文：实际电源识别器与图形边界回归。/ English: Real power input and raster boundary regression.
+"""中文：实际电源识别器与图形边界回归�? English: Real power input and raster boundary regression.
 SPDX-License-Identifier: Apache-2.0
 """
 from pathlib import Path
@@ -41,10 +41,15 @@ uint8_t ui_contrast_gray(uint8_t v){return v&0xf0;}
 void ui_clear_page(uint8_t *p){memset(p,255,sizeof(fb));}
 void ui_text_box(uint8_t *p,EpdRect box,int px,const char *s,enum EpdFontFlags align,bool inverted){(void)p;(void)align;(void)inverted;assert(box.x>=0&&box.y>=0&&box.x+box.width<=W&&box.y+box.height<=H);if(text_log)printf("TEXT %d %d %d %d %d %s\n",box.x,box.y,box.width,box.height,px,s);}
 void ui_text(uint8_t *p,int x,int y,int px,const char *s,enum EpdFontFlags align,bool inverted){(void)p;(void)x;(void)y;(void)px;(void)s;(void)align;(void)inverted;}
+/* 宿主玻璃替身：按矩形铺一层确定灰并返回成功，用暂存区跑玻璃组件的底图恢复和局部重画路径�?*/
+/* Host glass stand-in: fills the rect with a fixed gray and reports success, providing scratch
+   memory so the component backdrop/restore and local-redraw paths run. */
+bool ui_nav_glass_panel(uint8_t *p,EpdRect r,int radius,int white,int refract){(void)radius;(void)white;(void)refract;for(int y=0;y<r.height;++y)for(int x=0;x<r.width;++x)epd_draw_pixel(r.x+x,r.y+y,0xd0,p);return true;}
+uint8_t *ui_nav_glass_scratch(size_t bytes){static uint8_t *buf;if(!buf)buf=malloc(bytes);return buf;}
 '''
 for name in ('epd_draw_circle','epd_fill_circle_helper','epd_fill_circle'):
     code+=function('components/epdiy/src/epdiy.c',name)
-for name in ('ui_read_pixel','icon_nibble','ui_draw_icon','clamp_radius','draw_arc','ui_draw_round_rect','ui_inset_rect','ui_draw_control_frame','ui_fill_round_rect'):
+for name in ('ui_read_pixel','icon_nibble','ui_draw_icon','clamp_radius','draw_arc','ui_draw_round_rect','ui_inset_rect','ui_draw_control_frame','ui_fill_round_rect','ui_draw_popup_shadow'):
     code+=function('main/ui/ui_kit.c',name)
 code+=re.sub(r'^#include[^\n]*\n','',power,flags=re.M)
 code+=r'''
@@ -56,7 +61,7 @@ static void sample(int x,int y,int count,bool pressed,bool released){touch=(cst8
 static ui_power_action_t feed(int x,int y,int count,bool pressed,bool released){sample(x,y,count,pressed,released);return ui_power_dialog_feed(&dialog,&ctx,&dirty);}
 static void press(void){assert(feed(UI_POWER_THUMB_X,UI_POWER_THUMB_Y,1,true,false)==UI_POWER_ACTION_NONE&&!dirty.height);}
 static void raster_check(void){
- memcpy(before,fb,sizeof(fb));ui_power_dialog_draw_controls(fb,&dialog);unsigned changed=0;
+ memcpy(before,fb,sizeof(fb));ui_power_dialog_draw_controls(fb,&dialog,dirty);unsigned changed=0;
  for(int y=0;y<H;++y)for(int x=0;x<W;++x)if(epd_get_pixel(x,y,W,H,fb)!=epd_get_pixel(x,y,W,H,before)){
   ++changed;assert(x>=dirty.x&&x<dirty.x+dirty.width&&y>=dirty.y&&y<dirty.y+dirty.height);
  }
@@ -77,30 +82,30 @@ int main(int argc,char **argv){
  for(int kind=0;kind<5;++kind){
   ui_power_dialog_reset(&dialog,false);press();feed(550,UI_POWER_THUMB_Y,1,false,false);
   if(kind==0)feed(550,UI_POWER_THUMB_Y,2,false,false);
-  if(kind==1)feed(550,600,1,false,false);
+  if(kind==1)feed(550,UI_POWER_THUMB_Y+UI_POWER_TRACK_H+20,1,false,false);
   if(kind==2){ctx.consumed=true;assert(ui_power_dialog_feed(&dialog,&ctx,&dirty)==UI_POWER_ACTION_NONE);}
   if(kind==3){ctx.touch=NULL;assert(ui_power_dialog_feed(&dialog,&ctx,&dirty)==UI_POWER_ACTION_NONE);}
   if(kind==4){ctx.now_ms=0;assert(ui_power_dialog_feed(&dialog,&ctx,&dirty)==UI_POWER_ACTION_NONE);}
   assert(!dialog.position&&dialog.swallow);assert(feed(555,UI_POWER_THUMB_Y,0,false,true)==UI_POWER_ACTION_NONE);
  }
- ui_power_dialog_reset(&dialog,true);assert(feed(128,374,1,true,false)==UI_POWER_ACTION_NONE);assert(feed(555,374,1,false,false)==UI_POWER_ACTION_NONE);assert(feed(555,374,0,false,true)==UI_POWER_ACTION_NONE);
+ ui_power_dialog_reset(&dialog,true);assert(feed(UI_POWER_THUMB_X,UI_POWER_THUMB_Y,1,true,false)==UI_POWER_ACTION_NONE);assert(feed(555,UI_POWER_THUMB_Y,1,false,false)==UI_POWER_ACTION_NONE);assert(feed(555,UI_POWER_THUMB_Y,0,false,true)==UI_POWER_ACTION_NONE);
  for(int i=0;i<2;++i){int x=i?UI_POWER_CANCEL_X:UI_POWER_RESTART_X;
   ui_power_dialog_reset(&dialog,false);ui_power_dialog_draw(fb,&dialog);
   assert(feed(x,UI_POWER_BUTTON_Y,1,true,false)==UI_POWER_ACTION_NONE);raster_check();
-  assert(dirty.width==111&&dirty.height==111);
+  assert(dirty.width==2*UI_POWER_BUTTON_R+3&&dirty.height==2*UI_POWER_BUTTON_R+3);
   assert(feed(x,UI_POWER_BUTTON_Y,0,false,true)==(i?UI_POWER_ACTION_CANCEL:UI_POWER_ACTION_RESTART));
   assert(feed(x,UI_POWER_BUTTON_Y,0,false,true)==UI_POWER_ACTION_NONE);
-  feed(x-53,UI_POWER_BUTTON_Y-53,1,true,false);assert(feed(x-53,UI_POWER_BUTTON_Y-53,0,false,true)==UI_POWER_ACTION_NONE);
+  feed(x-UI_POWER_BUTTON_R-6,UI_POWER_BUTTON_Y-UI_POWER_BUTTON_R-6,1,true,false);assert(feed(x-UI_POWER_BUTTON_R-6,UI_POWER_BUTTON_Y-UI_POWER_BUTTON_R-6,0,false,true)==UI_POWER_ACTION_NONE);
   feed(x,UI_POWER_BUTTON_Y,1,true,false);assert(feed(x+100,UI_POWER_BUTTON_Y,1,false,false)==UI_POWER_ACTION_NONE&&dialog.swallow);assert(feed(x,UI_POWER_BUTTON_Y,0,false,true)==UI_POWER_ACTION_NONE);
  }
- printf("PASS: native power capture/release, 428 one-pixel drags, local raster bounds, no rectangular circle halo, fault/multitouch/clock cancellation, no end-tap shutdown, circle corners\n");
+ printf("PASS: native power capture/release, %d one-pixel drags, local raster bounds, no rectangular circle halo, fault/multitouch/clock cancellation, no end-tap shutdown, circle corners\n",UI_POWER_SLIDE_RANGE-1);
  if(argc>1){ui_power_dialog_reset(&dialog,false);text_log=true;ui_power_dialog_draw(fb,&dialog);FILE *file=fopen(argv[1],"wb");assert(file);fprintf(file,"P5\n%d %d\n255\n",W,H);for(int y=0;y<H;++y)for(int x=0;x<W;++x)fputc(epd_get_pixel(x,y,W,H,fb)*17/16,file);fclose(file);
  if(argc>2){ui_fill_round_rect(fb,(EpdRect){UI_POWER_TRACK_X,UI_POWER_TRACK_Y,UI_POWER_TRACK_W,UI_POWER_TRACK_H},UI_POWER_TRACK_H/2,0xe0);ui_draw_control_frame(fb,(EpdRect){UI_POWER_TRACK_X,UI_POWER_TRACK_Y,UI_POWER_TRACK_W,UI_POWER_TRACK_H},UI_POWER_TRACK_H/2,0x60);
  file=fopen(argv[2],"wb");assert(file);fprintf(file,"P5\n%d %d\n255\n",W,H);for(int y=0;y<H;++y)for(int x=0;x<W;++x)fputc(epd_get_pixel(x,y,W,H,fb)*17/16,file);fclose(file);}
  }
 }
 '''
-with tempfile.TemporaryDirectory(prefix='kiikoread-power-',dir='/private/tmp') as folder:
+with tempfile.TemporaryDirectory(prefix='kiikoread-power-',dir=str(ROOT/'build')) as folder:
     c,binary=Path(folder)/'test.c',Path(folder)/'test';c.write_text(code)
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',
         '-I'+str(ROOT/'tools/ui_gesture_stubs'),'-I'+str(ROOT/'main/ui'),str(c),'-o',str(binary)],check=True)

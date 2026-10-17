@@ -39,6 +39,7 @@
 #include "auto_lock.h"
 #include "crash_note.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "app_registry.h"
@@ -476,6 +477,18 @@ void app_loop_run(const app_loop_config_t* config) {
     int menu_pressed = UI_MENU_HIT_NONE;
     menu_feedback_t feedback = {0};
     int menu_leaf = 0;
+    // 底栏选中胶囊：长按选中格后放大并跟手拖动，抬手切页。
+    // Dock active capsule: a hold on the active cell grows it, dragging follows the finger, release
+    // switches pages.
+    int nav_hold_tab = -1;
+    int nav_hold_x = 0, nav_hold_y = 0;
+    int64_t nav_hold_ms = 0;
+    bool nav_drag = false;
+    int nav_drag_x = 0;
+    EpdRect nav_drag_dirty = {0};
+    EpdRect nav_drag_path = {0};
+    bool nav_dock_clean_pending = false;
+    EpdRect nav_dock_clean_area = {0};
     const app_desc_t* return_app = NULL;
     int return_leaf = 0, return_menu_leaf = 0;
     bool return_to_menu = false;
@@ -601,7 +614,7 @@ void app_loop_run(const app_loop_config_t* config) {
             EpdRect dirty;
             ui_power_action_t action = ui_power_dialog_feed(&power_dialog, &ctx, &dirty);
             if (action == UI_POWER_ACTION_NONE && dirty.height > 0) {
-                ui_power_dialog_draw_controls(ctx.fb, &power_dialog);
+                ui_power_dialog_draw_controls(ctx.fb, &power_dialog, dirty);
                 enum EpdDrawError result = update_display_area_diff_with(
                     ctx.hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, dirty);
                 guard_draw_result(ctx.hl, result);
@@ -653,7 +666,7 @@ void app_loop_run(const app_loop_config_t* config) {
             EpdRect dirty;
             ui_power_dialog_cancel_input(&power_dialog, &dirty);
             if (power_dialog_open && dirty.height > 0) {
-                ui_power_dialog_draw_controls(ctx.fb, &power_dialog);
+                ui_power_dialog_draw_controls(ctx.fb, &power_dialog, dirty);
                 guard_draw_result(ctx.hl, update_display_area_diff_with(
                     ctx.hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, dirty));
             }
@@ -681,6 +694,15 @@ void app_loop_run(const app_loop_config_t* config) {
                 ctx.user_activity = true;
                 nav_press_owned = true;
                 if (app_tab_at(tab) != current) ui_nav_request(&ctx, tab);
+                else {
+                    // 按在选中胶囊上先不切页：等长按后进入拖拽，短按抬手什么也不做。
+                    // A press on the active capsule does not switch yet: a hold starts the drag and a
+                    // quick release does nothing.
+                    nav_hold_tab = tab;
+                    nav_hold_x = touch.x;
+                    nav_hold_y = touch.y;
+                    nav_hold_ms = ctx.now_ms;
+                }
             }
         }
         if (err == ESP_OK && pressed && touch.count == 1 && !power_input_owned &&
@@ -753,6 +775,73 @@ void app_loop_run(const app_loop_config_t* config) {
                 if (redraw == APP_REDRAW_NONE) ctx.consumed = false;
             }
         }
+        // 底栏选中胶囊：长按后放大并跟手拖动，抬手切到胶囊下的页面。
+        // Dock active capsule: a hold grows it, dragging follows the finger, and release switches to
+        // the page under it.
+        if (nav_hold_tab >= 0) {
+            const bool nav_lift = err == ESP_OK && !touch.touched;
+            const bool nav_abort = err != ESP_OK || (touch.touched && touch.count != 1);
+            if (nav_lift || nav_abort) {
+                if (nav_drag) {
+                    const EpdRect band = ui_nav_capsule_drag_rect();
+                    const app_desc_t *next = nav_lift ? app_tab_at(ui_nav_capsule_tab(nav_drag_x)) : NULL;
+                    nav_drag = false;
+                    ui_nav_capsule_drag_end(ctx.fb);
+                    // 只清胶囊真正走过的区域，避免整条 dock 都闪一次。
+                    // Clear only the path the capsule actually covered, not the whole dock band.
+                    nav_dock_clean_area = nav_drag_path.width > 0 ? nav_drag_path : band;
+                    if (next != NULL && next != current) ctx.request_app = next;
+                    else guard_draw_result(ctx.hl, update_display_area_diff_with(ctx.hl,
+                             &E0470_FOLLOW_WAVEFORM, MODE_DU, band));
+                    // 拖拽留下的 DU 残影：本轮末尾用 GC16 把整条 dock 清一次。
+                    // DU ghosting from the drag: clear the whole dock band once with GC16 at the end
+                    // of this iteration.
+                    nav_dock_clean_pending = true;
+                    ctx.consumed = true;
+                }
+                nav_hold_tab = -1;
+            } else if (!nav_drag) {
+                const int adx = abs((int)touch.x - nav_hold_x);
+                const int ady = abs((int)touch.y - nav_hold_y);
+                const int drag_slop = UI_TOUCH_SLOP_PX / 2;
+                const bool long_ready = ctx.now_ms - nav_hold_ms >= UI_LONG_PRESS_MS;
+                // 长按到点原地放大；不到点就直接横向拖动也立刻放大跟手，两种进入方式并存。
+                // A completed hold grows in place; a direct horizontal drag before that grows and
+                // follows immediately, so both ways enter the same drag.
+                if (long_ready || (adx > drag_slop && adx >= ady)) {
+                    EpdRect click_area;
+                    if (ui_click_feedback_active() && ui_click_feedback_release(ctx.fb, &click_area))
+                        guard_draw_result(ctx.hl, update_display_area_diff_with(ctx.hl,
+                            &E0470_FOLLOW_WAVEFORM, MODE_DU, click_area));
+                    if (ui_nav_capsule_drag_begin(ctx.fb)) {
+                        nav_drag = true;
+                        nav_drag_x = touch.x;
+                        nav_drag_path = (EpdRect){0};
+                        if (ui_nav_capsule_drag_move(ctx.fb, nav_drag_x, &nav_drag_dirty)) {
+                            nav_drag_path = nav_drag_dirty;
+                            guard_draw_result(ctx.hl, update_display_area_diff_with(ctx.hl,
+                                &E0470_FOLLOW_WAVEFORM, MODE_DU, nav_drag_dirty));
+                        }
+                    } else nav_hold_tab = -1;
+                } else if (adx > UI_TOUCH_SLOP_PX || ady > UI_TOUCH_SLOP_PX) {
+                    // 竖向滑走：不进入胶囊拖拽，也不切页。
+                    // A vertical move neither drags the capsule nor switches.
+                    nav_hold_tab = -1;
+                }
+                if (nav_hold_tab >= 0) ctx.consumed = true;
+            } else if (touch.x != nav_drag_x) {
+                nav_drag_x = touch.x;
+                if (ui_nav_capsule_drag_move(ctx.fb, nav_drag_x, &nav_drag_dirty)) {
+                    nav_drag_path = nav_drag_path.width > 0
+                        ? ui_rect_union(nav_drag_path, nav_drag_dirty) : nav_drag_dirty;
+                    guard_draw_result(ctx.hl, update_display_area_diff_with(ctx.hl,
+                        &E0470_FOLLOW_WAVEFORM, MODE_DU, nav_drag_dirty));
+                }
+                ctx.consumed = true;
+            } else {
+                ctx.consumed = true;
+            }
+        }
         if (err == ESP_OK) was_touched = touch.touched;
         if (!power_input_owned && !quick_input_owned && menu_open && menu_pressed >= 0) {
             int hit = ui_menu_hit_test(latest.x, latest.y, menu_leaf);
@@ -768,7 +857,8 @@ void app_loop_run(const app_loop_config_t* config) {
                 }
             }
         }
-        if (!power_input_owned && !quick_input_owned && !menu_open && current->on_gesture && err == ESP_OK) {
+        if (!power_input_owned && !quick_input_owned && !menu_open && nav_hold_tab < 0 &&
+            current->on_gesture && err == ESP_OK) {
             ui_gesture_event_t event;
             if (ui_gesture_feed(&gesture, &ctx, &event)) {
                 app_redraw_t redraw = current->on_gesture(&ctx, &event);
@@ -931,7 +1021,7 @@ void app_loop_run(const app_loop_config_t* config) {
             while (ble_pt_pop_raw(&raw_event)) {}
         }
         if (s_quick.open && quick_status() != s_quick_status) quick_present(&ctx, current, false);
-        if (!power_dialog_open && !s_quick.open && !quick_input_owned && !ui_click_feedback_active() && !menu_open && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
+        if (!power_dialog_open && !s_quick.open && !quick_input_owned && !ui_click_feedback_active() && !menu_open && nav_hold_tab < 0 && !ctx.request_app && !ctx.request_menu && !ctx.request_return && current->on_tick != NULL) {
             app_redraw_t redraw = current->on_tick(&ctx);
             if (redraw == APP_REDRAW_PAGE || redraw == APP_REDRAW_FULL) held_key = -1;
             present_page(&ctx, current, &gesture, redraw);
@@ -1038,6 +1128,17 @@ void app_loop_run(const app_loop_config_t* config) {
                 menu_leaf = ui_menu_leaf_for_app(current);
                 present_menu(&ctx, current, menu_leaf, &feedback);
             }
+        }
+        // 胶囊拖拽结束后用一次全像素 GC16 区域刷新，把 dock 上跟手 DU 留下的残影清干净。
+        // 差分刷新只驱动“与上一帧不同”的像素，胶囊走过的路径已经还原过，必须全像素重扫，
+        // 否则那一圈残影永远不会被驱动掉。
+        // After a capsule drag, one full-pixel GC16 area refresh clears the DU ghosting on the dock.
+        // A diff update would only drive pixels that changed since the last frame; the capsule path
+        // was already restored, so only a full-pixel pass can erase that residue.
+        if (nav_dock_clean_pending && !power_dialog_open) {
+            nav_dock_clean_pending = false;
+            guard_draw_result(ctx.hl, update_display_area_full_with(ctx.hl, &E0470_FULL_WAVEFORM,
+                              MODE_GC16, nav_dock_clean_area));
         }
         // 连续列表相位期间缩短等待；每次仍读触摸，并给其他任务让出一个调度周期。
         // Reduce waits during continuous list phases; poll touch each time and yield one scheduling tick.

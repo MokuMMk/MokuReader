@@ -63,7 +63,9 @@ void ui_quick_menu_draw(uint8_t *fb, bool wifi, bool bluetooth) {
         for (int i = 0; i < 4; ++i) {
             int dx = x - center_x(i), dy = y - UI_QUICK_CIRCLE_Y;
             if (dx * dx + dy * dy <= UI_QUICK_RADIUS * UI_QUICK_RADIUS) {
-                tint = (i == 0 && wifi) || (i == 1 && bluetooth) ? 176 : 244;
+                // 圆钮靠灰底区分，不再画外圈：开启态更深，未开启态浅一档。
+                // The knobs separate by a gray fill instead of a ring: deeper when on, lighter when off.
+                tint = (i == 0 && wifi) || (i == 1 && bluetooth) ? 164 : 222;
                 break;
             }
         }
@@ -77,8 +79,6 @@ void ui_quick_menu_draw(uint8_t *fb, bool wifi, bool bluetooth) {
     static const ui_icon_t icons[] = {UI_ICON_WIFI, UI_ICON_BLUETOOTH, UI_ICON_REFRESH_CW};
     for (int i = 0; i < 4; ++i) {
         int cx = center_x(i);
-        epd_draw_circle(cx, UI_QUICK_CIRCLE_Y, UI_QUICK_RADIUS, 0x38, fb);
-        epd_draw_circle(cx, UI_QUICK_CIRCLE_Y, UI_QUICK_RADIUS - 1, 0x38, fb);
         if (i < 3) ui_draw_icon(fb, cx, UI_QUICK_CIRCLE_Y, 44, icons[i], UI_GRAY_BLACK);
         else lock_icon(fb, cx, UI_QUICK_CIRCLE_Y);
         if ((i == 0 && wifi) || (i == 1 && bluetooth)) {
@@ -87,12 +87,16 @@ void ui_quick_menu_draw(uint8_t *fb, bool wifi, bool bluetooth) {
         }
     }
     ui_fill_round_rect(fb, (EpdRect){width / 2 - 26, 240, 52, 6}, 3, 0x70);
-    // 只画遮罩内的双像素轮廓，顶部直角、底部圆角，不越过下层边界。
-    // Draw a two-pixel outline within the mask: square top, rounded bottom, no underlay leakage.
-    for (int y = 0; y < UI_QUICK_HEIGHT && y < height; ++y) for (int x = 0; x < width; ++x) {
-        if (layer_pixel(x, y, width) && (x < 2 || x >= width - 2 || y < 2 ||
-            y >= UI_QUICK_HEIGHT - 2 || !layer_pixel(x - 2, y, width) ||
-            !layer_pixel(x + 2, y, width) || !layer_pixel(x, y + 2, width)))
-            epd_draw_pixel(x, y, 0x38, fb);
+    // 面板下沿的投影替代描边：沿每列的底边向下画一条渐隐灰带。
+    // A shadow along the bottom edge replaces the outline: a fading gray band below each column.
+    for (int x = 0; x < width; ++x) {
+        int bottom = -1;
+        for (int y = 0; y < UI_QUICK_HEIGHT && y < height; ++y)
+            if (layer_pixel(x, y, width)) bottom = y;
+        if (bottom < 0) continue;
+        for (int d = 1; d <= 8 && bottom + d < height; ++d) {
+            const uint8_t tone = (uint8_t)(0xff - (9 - d) * 6);
+            epd_draw_pixel(x, bottom + d, ui_image_dither_gray(tone, x, bottom + d), fb);
+        }
     }
 }

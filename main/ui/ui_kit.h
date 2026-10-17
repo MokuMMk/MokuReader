@@ -205,6 +205,10 @@ void ui_draw_choice_round_rect(
 void ui_fill_round_rect(
     uint8_t* framebuffer, EpdRect rect, int radius, uint8_t color
 );
+/// 浮层阴影：先在面板右下方叠两层灰影，再由调用方画面板本身；用投影代替描边表达层级。
+/// Popup shadow: two gray silhouettes offset down-right, painted before the panel itself, so a
+/// floating layer reads by elevation instead of an outline.
+void ui_draw_popup_shadow(uint8_t* framebuffer, EpdRect rect, int radius);
 EpdRect ui_inset_rect(EpdRect r, int d);
 /// 合并刷新区域；空矩形视为无区域，结果裁到逻辑屏幕内。
 /// Union refresh regions; empty rectangles contribute nothing, and the result is clipped to the logical screen.

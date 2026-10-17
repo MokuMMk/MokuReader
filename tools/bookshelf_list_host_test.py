@@ -79,7 +79,7 @@ static unsigned s_cover_pending_mask;
 #define SHELF_FAST_COVER_STRIDE 21
 #define SHELF_FAST_COVER_WIDTH 164
 static struct {uint8_t *gray,*fast_bits;unsigned width,height;bool fast_white_edge;} s_covers[4];
-typedef struct {char name[256],author[128];bool has_progress,favorite;unsigned pct;} shelf_entry_t;
+typedef struct {char name[256],author[128];bool has_progress,favorite;unsigned pct;bool finished;} shelf_entry_t;
 static shelf_entry_t *s_shelf;
 static int s_visible_count=4;
 static int shelf_rows(void){return 4;}

@@ -98,17 +98,11 @@ int book_toc_page_from_percent(int percent, int pages) {
     return page < pages ? page : pages - 1;
 }
 
-// 双像素深色轮廓让白色卡片在墨水屏上仍有清晰边界。/ Dark two-pixel outlines keep white cards legible on e-paper.
-static void toc_border(uint8_t *fb, EpdRect rect, int radius, bool selected) {
-    uint8_t gray = selected ? 0x38 : 0x60;
-    ui_draw_round_rect(fb, rect, radius, gray);
-    ui_draw_round_rect(fb, (EpdRect){rect.x + 1, rect.y + 1, rect.width - 2, rect.height - 2},
-                       radius - 1, gray);
-}
-
+// 目录与其他浮层同一套分层：白色块直接放在灰底上，不再描边；浮起的卡片用投影。
+// The directory follows the same layering as other layers: white blocks sit on the gray page without
+// an outline, and floating cards use a shadow.
 static void toc_pill(uint8_t *fb, EpdRect rect, const char *text, int px, bool selected) {
     ui_fill_round_rect(fb, rect, 20, selected ? 0xc0 : UI_GRAY_WHITE);
-    toc_border(fb, rect, 20, selected);
     char label[160];
     one_line(label, sizeof(label), text);
     fit_line(label, px, rect.width - 16);
@@ -147,7 +141,6 @@ void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
             EpdRect r = book_toc_row_rect(row);
             bool selected = index == current;
             ui_fill_round_rect(fb, r, 20, selected ? 0xc0 : UI_GRAY_WHITE);
-            toc_border(fb, r, 20, selected);
             char number[16]; snprintf(number, sizeof(number), "%02u", (unsigned)index + 1);
             ui_text_box(fb,(EpdRect){r.x+14,r.y+11,58,72},21,number,EPD_DRAW_ALIGN_LEFT,false);
             char raw[160] = "", label[160];
@@ -174,7 +167,6 @@ void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
     toc_pill(fb, (EpdRect){548, 1018, 100, 68}, "10页 »", 24, false);
     EpdRect jump = {36, 1100, 612, 74};
     ui_fill_round_rect(fb, jump, 21, UI_GRAY_WHITE);
-    toc_border(fb, jump, 21, false);
     ui_text_box(fb,(EpdRect){58,1109,388,56},28,"按百分比跳转",EPD_DRAW_ALIGN_LEFT,false);
     char percent[24];
     snprintf(percent, sizeof(percent), "%d%%  ›", (page + 1) * 100 / pages);
@@ -185,8 +177,8 @@ void book_toc_render_jump(uint8_t *fb, size_t chapters, int percent) {
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
     EpdRect card = {44, 356, 596, 572};
+    ui_draw_popup_shadow(fb, card, 30);
     ui_fill_round_rect(fb, card, 30, UI_GRAY_WHITE);
-    toc_border(fb, card, 30, true);
     ui_text_box(fb,(EpdRect){(342)-250,393,500,44},32,"跳到目录位置",EPD_DRAW_ALIGN_CENTER,false);
     ui_text_box(fb,(EpdRect){(342)-250,450,500,44},24,"选择百分比，先预览目标位置",
                   EPD_DRAW_ALIGN_CENTER, false);
@@ -197,13 +189,11 @@ void book_toc_render_jump(uint8_t *fb, size_t chapters, int percent) {
     if (width) ui_fill_round_rect(fb, (EpdRect){92, 637, width, 8}, 4, 0x40);
     int knob = 92 + width;
     epd_fill_circle(knob, 641, 25, UI_GRAY_WHITE, fb);
-    epd_draw_circle(knob, 641, 25, 0x40, fb);
     static const char *ticks[] = {"0", "25", "50", "75", "100%"};
     for (int i = 0; i < 5; ++i)
         ui_text_box(fb,(EpdRect){(92 + i * 125)-250,678,500,44},24,ticks[i],EPD_DRAW_ALIGN_CENTER,false);
     EpdRect target_card = {75, 740, 534, 84};
     ui_fill_round_rect(fb, target_card, 19, 0xe8);
-    toc_border(fb, target_card, 19, false);
     ui_text_box(fb,(EpdRect){99,747,486,30},23,"目标位置",EPD_DRAW_ALIGN_LEFT,false);
     int pages = book_toc_pages(chapters);
     int target = book_toc_page_from_percent(percent, pages);

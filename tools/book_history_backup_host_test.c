@@ -137,9 +137,15 @@ int main(void) {
         assert(b && b->type==a->type && b->len==a->len && !memcmp(a->data,b->data,a->len));
     }
     fclose(f);
-    // 新备份完整恢复隐藏记录，并继续保留进度和收藏。/ New backups restore removal and reading data.
+    // 新备份完整恢复隐藏记录，并继续保留进度和收藏；三种逐书标记都要能往返。
+    // New backups restore removal and reading data; all three mark prefixes must round-trip.
     active=0;
     assert(put(5,key,NVS_TYPE_STR,path,path_len)==ESP_OK);
+    char finished_key[11], resume_key[11];
+    snprintf(finished_key,sizeof(finished_key),"f_%08x",path_hash);
+    snprintf(resume_key,sizeof(resume_key),"r_%08x",path_hash);
+    assert(put(5,finished_key,NVS_TYPE_STR,path,path_len)==ESP_OK);
+    assert(put(5,resume_key,NVS_TYPE_STR,path,path_len)==ESP_OK);
     f=tmpfile(); assert(f);
     assert(book_history_backup_write(f)==ESP_OK);
     rewind(f); assert(book_history_backup_validate(f));
@@ -149,12 +155,16 @@ int main(void) {
         record_t *a=&records[0][i], *b=find_record(a->ns,a->key);
         assert(b && b->type==a->type && b->len==a->len && !memcmp(a->data,b->data,a->len));
     }
+    assert(find_record(5,finished_key)&&find_record(5,resume_key));
+    assert(valid_record(5,NVS_TYPE_STR,finished_key,(const uint8_t*)path,path_len));
+    assert(valid_record(5,NVS_TYPE_STR,resume_key,(const uint8_t*)path,path_len));
+    assert(!valid_record(5,NVS_TYPE_STR,"g_deadbeef",(const uint8_t*)path,path_len));
     assert(!valid_record(5,NVS_TYPE_STR,key,(const uint8_t*)other,other_len));
     assert(!valid_record(5,NVS_TYPE_STR,key,(const uint8_t*)path,path_len-1));
     assert(!valid_record(5,NVS_TYPE_BLOB,key,(const uint8_t*)path,path_len));
     assert(fseek(f,-1,SEEK_END)==0); assert(fputc(0xff,f)!=EOF); fflush(f);
     rewind(f); assert(!book_history_backup_validate(f));
     fclose(f);
-    puts("book history backup: progress, time, bookmarks, favorites, titles, shelf removals and checksum passed");
+    puts("book history backup: progress, time, bookmarks, favorites, titles, shelf removals, finished/continue marks and checksum passed");
     return 0;
 }

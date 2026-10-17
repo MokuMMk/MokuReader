@@ -584,6 +584,23 @@ void ui_fill_round_rect(
     );
 }
 
+void ui_draw_popup_shadow(uint8_t* framebuffer, EpdRect rect, int radius) {
+    if (!framebuffer || rect.width <= 0 || rect.height <= 0) return;
+    // 两层向右下的灰影：外层更浅、内层更深，面板压上去后只在右下露出，读起来像投影。
+    // Two gray silhouettes shifted down-right: a lighter outer one and a darker inner one; the panel
+    // painted on top leaves only the lower-right edge visible, which reads as a shadow.
+    ui_fill_round_rect(
+        framebuffer,
+        (EpdRect){rect.x + 7, rect.y + 9, rect.width, rect.height},
+        radius, 0xd8
+    );
+    ui_fill_round_rect(
+        framebuffer,
+        (EpdRect){rect.x + 3, rect.y + 4, rect.width, rect.height},
+        radius, 0xb8
+    );
+}
+
 bool ui_rect_hit(EpdRect rect, uint16_t x, uint16_t y) {
     return (int)x >= rect.x && (int)x < rect.x + rect.width
         && (int)y >= rect.y && (int)y < rect.y + rect.height;

@@ -62,6 +62,10 @@ static bool files_alloc(void) {
 }
 static int s_count, s_folder, s_page;
 static int s_requested_folder = -1;
+// “在文件中显示”的目标：路径留到下一次扫描，扫到后翻到它所在的页再清空。
+// "Show in files" target: the path survives until the next scan, which pages to its list row and
+// then clears it.
+static char s_reveal[288];
 static int s_counts[3];
 static bool s_scan_pending;
 static int64_t s_space_poll_ms;
@@ -321,6 +325,11 @@ void app_files_request_folder(int folder) {
     if (folder >= 0 && folder < 3) s_requested_folder = folder;
 }
 
+void app_files_request_reveal(const char *path) {
+    if (!path || !path[0]) return;
+    copy_utf8(s_reveal, sizeof(s_reveal), path);
+}
+
 static bool supported(int folder, const char *name) {
     if (!name[0] || name[0] == '.' || !strncmp(name, "._", 2)) return false;
     const char *ext = strrchr(name, '.');
@@ -377,6 +386,19 @@ static void rescan_current(void) {
     scan_folder(s_folder >= 0 ? s_folder : 3);
 }
 
+// 在列表里找到“在文件中显示”的目标并翻到它所在的页；找不到就不动页码。
+// Page to the reveal target when the list holds it; leave the page alone when it does not.
+static void reveal_page(void) {
+    if (!s_reveal[0]) return;
+    for (int i = 0; i < s_count; ++i) {
+        if (strcmp(s_files[i].path, s_reveal)) continue;
+        s_page = i / visible_rows();
+        s_selected = s_files[i];
+        break;
+    }
+    s_reveal[0] = 0;
+}
+
 static int count_root(int folder) {
     if (!s_sd.mounted) return 0;
     DIR *dir = opendir(folder_root(folder));
@@ -410,12 +432,6 @@ static void file_detail(char *dst, size_t cap, const file_item_t *item) {
 // Two-pixel file dividers stay legible on the panel without changing the layout.
 static void file_rule(uint8_t *fb, int x, int y, int width) {
     ui_draw_separator(fb, y, x, width, 0x60);
-}
-
-// 大卡片用双层描边，避免单像素浅灰线在低对比度屏上消失。
-// Double-stroke large cards so their outlines survive low-contrast E-ink rendering.
-static void file_card_border(uint8_t *fb, EpdRect rect, int radius) {
-    ui_draw_control_frame(fb, rect, radius, 0x50);
 }
 
 static void fit_name(char *name, int px, int width) {
@@ -455,8 +471,8 @@ static void editor_start(void) {
 static void render_actions(uint8_t *fb) {
     // S03：保留当前目录作背景，只叠加文件操作底部面板。/ S03: keep the directory visible and overlay a file-action sheet.
     EpdRect sheet = {20, 430, 644, 626};
+    ui_draw_popup_shadow(fb, sheet, 28);
     ui_fill_round_rect(fb, sheet, 28, UI_GRAY_WHITE);
-    file_card_border(fb, sheet, 28);
     ui_fill_round_rect(fb, (EpdRect){604, 454, 38, 38}, 19, 0xe0);
     ui_text_vc(fb, 623, 473, 24, "×", EPD_DRAW_ALIGN_CENTER, false);
     char name[128]; copy_utf8(name, sizeof(name), s_selected.name); fit_name(name, 28, 540);
@@ -479,7 +495,6 @@ static void render_actions(uint8_t *fb) {
         for (int i = 0; i < 4; ++i) {
             EpdRect button = {40 + (i % 2) * 312, 648 + (i / 2) * 122, 292, 100};
             ui_fill_round_rect(fb, button, 20, 0xe8);
-            ui_draw_control_frame(fb, button, 20, 0x60);
             ui_text_vc(fb, button.x + button.width / 2, button.y + 50, 25,
                        labels[i], EPD_DRAW_ALIGN_CENTER, false);
         }
@@ -530,6 +545,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     }
     (void)ctx;
     ui_clear_page(fb);
+    // 文件页与其他页面统一灰底：白色信息块直接浮在灰面上，不再描边。
+    // The file pages share the gray ground with the rest: white blocks float without outlines.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
     ui_nav_status(fb);
     if (s_view == FILE_VIEW_RENAME) {
         render_rename(fb);
@@ -570,8 +588,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
             file_rule(fb, 101, y + 85, 547);
         }
         if (s_folder == 3) {
-            ui_draw_control_frame(fb, (EpdRect){36, 875, 293, 76}, 8, UI_GRAY_BLACK);
-            ui_draw_control_frame(fb, (EpdRect){355, 875, 293, 76}, 8, UI_GRAY_BLACK);
+            // 底部操作条改用白底块，不再描边。/ The bottom actions are white blocks now, not outlines.
+            ui_fill_round_rect(fb, (EpdRect){36, 875, 293, 76}, 8, UI_GRAY_WHITE);
+            ui_fill_round_rect(fb, (EpdRect){355, 875, 293, 76}, 8, UI_GRAY_WHITE);
             ui_text(fb, 182, 897, 24, s_view == FILE_VIEW_MOVE ? "取消移动" : "设为书籍目录", EPD_DRAW_ALIGN_CENTER, false);
             ui_text(fb, 501, 897, 24, s_view == FILE_VIEW_MOVE ? "移动到此处" : "设为字体目录", EPD_DRAW_ALIGN_CENTER, false);
             if (s_message[0]) ui_text(fb, 36, 995, 22, s_message, EPD_DRAW_ALIGN_LEFT, false);
@@ -582,7 +601,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         ui_text(fb, 36, 91, 52, "文件", EPD_DRAW_ALIGN_LEFT, false);
         EpdRect storage = storage_card_rect();
         ui_fill_round_rect(fb, storage, 24, UI_GRAY_WHITE);
-        file_card_border(fb, storage, 24);
         ui_text(fb, 58, 188, 27, "存储卡", EPD_DRAW_ALIGN_LEFT, false);
         char total[32], usage[80];
         if (s_sd.mounted) {
@@ -611,7 +629,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 3; ++i) {
             EpdRect card = home_transfer_rect(i);
             ui_fill_round_rect(fb, card, 20, UI_GRAY_WHITE);
-            ui_draw_control_frame(fb, card, 20, UI_GRAY_BLACK);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 35, 21, methods[i],
                        EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, card.x + card.width / 2, card.y + 75, 19, details[i],
@@ -620,7 +637,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         char summary[48]; snprintf(summary, sizeof(summary), "根目录 · %d 项", s_count);
         ui_text(fb, 36, 482, 21, summary, EPD_DRAW_ALIGN_LEFT, false);
         ui_fill_round_rect(fb, (EpdRect){537, 458, 111, 50}, 23, UI_GRAY_WHITE);
-        ui_draw_control_frame(fb, (EpdRect){537, 458, 111, 50}, 23, 0x70);
         ui_text_vc(fb, 592, 483, 19, "名称 ↑", EPD_DRAW_ALIGN_CENTER, false);
         int first = s_page * root_rows();
         int rows = s_count - first;
@@ -628,7 +644,6 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (rows < 0) rows = 0;
         EpdRect list = {36, 520, 612, root_rows() * 91};
         ui_fill_round_rect(fb, list, 24, UI_GRAY_WHITE);
-        file_card_border(fb, list, 24);
         if (!s_count) ui_text_vc(fb, 342, 565, 22, s_message[0] ? s_message : "根目录为空", EPD_DRAW_ALIGN_CENTER, false);
         for (int row = 0; row < root_rows(); ++row) {
             int index = first + row;
@@ -671,9 +686,28 @@ static void on_enter(app_ctx_t *ctx) {
     s_space_poll_ms=ctx->now_ms;
     s_sd_format_confirm = false;
     s_sd_notice[0] = 0;
+    // “在文件中显示”把列表定位到这本书所在的文件夹：书籍根目录用「书籍」列表，子目录和
+    // 其他 TF 目录用目录浏览；定位不到就停在文件首页。
+    // "Show in files" points the list at the book's folder: the books root uses the Books list,
+    // subfolders and other card folders use the browser, and an unreachable path stays at root.
+    if (s_reveal[0]) {
+        char folder[288];
+        copy_utf8(folder, sizeof(folder), s_reveal);
+        char *slash = strrchr(folder, '/');
+        struct stat st;
+        if (slash) *slash = 0;
+        if (folder[0] && !stat(folder, &st) && S_ISDIR(st.st_mode)) {
+            if (!strcmp(folder, app_settings_books_dir())) s_folder = 0;
+            else if (!strncmp(folder, "/sdcard/", 8)) {
+                s_folder = 3;
+                copy_utf8(s_dir, sizeof(s_dir), folder);
+            }
+        }
+    }
     for (int i = 0; i < 3; ++i) s_counts[i] = count_root(i);
     if (s_folder >= 0) scan_folder(s_folder);
     else scan_folder(3);
+    reveal_page();
 }
 static void on_media_lost(app_ctx_t *ctx) {
     (void)ctx; ui_keyboard_end(); s_folder = -1; s_count = 0; s_scan_pending = false;
@@ -711,6 +745,7 @@ static app_redraw_t on_tick(app_ctx_t *ctx) {
     for (int i = 0; i < 3; ++i) s_counts[i] = count_root(i);
     if (s_folder >= 0) scan_folder(s_folder);
     else scan_folder(3);
+    reveal_page();
     return APP_REDRAW_PAGE;
 }
 

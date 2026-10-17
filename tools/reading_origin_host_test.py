@@ -18,29 +18,40 @@ unit=r'''
 #include <stdlib.h>
 #include "main/ui/ui_nav_layout.h"
 typedef struct {int x,y,width,height;} EpdRect;
-typedef struct {int now_ms,leaf;} app_ctx_t;
+typedef struct {int now_ms,leaf;} app_ctx_leaf_t;
+typedef struct {int now_ms,leaf;uint8_t *fb;const void *request_app;} app_ctx_t;
 typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL} app_redraw_t;
 enum {HOME_ROOT,HOME_COMPONENT,HOME_GOAL,HOME_TIME,READING,SHELF};
-enum {UI_GESTURE_PRESS,UI_GESTURE_MOVE,UI_GESTURE_TAP,UI_GESTURE_LONG_PRESS,UI_GESTURE_SWIPE_L,UI_GESTURE_SWIPE_R,UI_GESTURE_SWIPE_U};
+enum {UI_GESTURE_PRESS,UI_GESTURE_MOVE,UI_GESTURE_TAP,UI_GESTURE_LONG_PRESS,UI_GESTURE_SWIPE_L,UI_GESTURE_SWIPE_R,UI_GESTURE_SWIPE_U,UI_GESTURE_CANCEL};
 typedef struct {int type,x0,y0,x,y;} ui_gesture_event_t;
 typedef int app_home_component_t;
 #define APP_HOME_FOLDER 7
 #define HOME_COMPONENT_OPTIONS 2
 #define UI_LOCK_WIDTH 684
+#define UI_GRAY_WHITE 255
 #define ESP_OK 0
 static app_home_component_t s_components[]={0,7};
 static int s_view=HOME_ROOT,s_component_browse,s_goal_draft,s_time_stamp;
 static bool s_save_error,s_component_pending,s_widget_pending,s_time_pending;
 static struct {bool valid;} s_time_trail;
 static EpdRect s_area;
-typedef struct {char path[32];bool has_progress;uint8_t *cover;uint16_t cover_width,cover_height;bool cover_fast;} home_book_t;
+typedef struct {char path[32];bool has_progress;uint8_t *cover;uint16_t cover_width,cover_height;bool cover_fast;bool finished,resume_hidden;} home_book_t;
 static int drawn;
 static uint8_t ui_contrast_gray(uint8_t v){return v;}
 static uint8_t ui_image_dither_gray(uint8_t v,int x,int y){(void)x;(void)y;return v;}
 static void epd_draw_pixel(int x,int y,uint8_t g,uint8_t *fb){(void)x;(void)y;(void)g;(void)fb;++drawn;}
 static void ui_fill_round_rect(uint8_t *fb,EpdRect r,int radius,uint8_t g){(void)fb;(void)r;(void)radius;(void)g;}
+static void ui_fill_rect_fast(EpdRect r,uint8_t g,uint8_t *fb){(void)r;(void)g;(void)fb;}
+static void render_card(uint8_t *fb,const home_book_t *item,int page,int index,bool focused){(void)fb;(void)item;(void)page;(void)index;(void)focused;}
 static home_book_t s_current,s_recent[6];
 static int open_calls,nav=-1;static bool fail_open;
+static int finished_calls,resume_hidden_calls,reveal_calls;static bool action_fail;static char action_path[64];
+static const struct app_desc_page {int unused;} test_files_page={0};
+static const struct app_desc_page *app_files_page(void){return &test_files_page;}
+static bool app_book_set_finished(const char *path,bool finished){assert(finished);++finished_calls;snprintf(action_path,sizeof(action_path),"%s",path);return !action_fail;}
+static bool app_book_resume_hidden(const char *path){(void)path;return false;}
+static bool app_book_set_resume_hidden(const char *path,bool hidden){assert(hidden);++resume_hidden_calls;snprintf(action_path,sizeof(action_path),"%s",path);return !action_fail;}
+static void app_files_request_reveal(const char *path){++reveal_calls;snprintf(action_path,sizeof(action_path),"%s",path);}
 static int app_settings_home_component(void){return 0;}
 static int app_settings_set_home_component(int i){(void)i;return 0;}
 static int app_settings_home_goal_minutes(void){return 30;}
@@ -57,7 +68,7 @@ static bool app_book_request_open_from_home(const char *path){assert(!strcmp(pat
 unit+=source[source.index('#define HOME_TITLE_X'):source.index('static bool s_reading_days_valid;')]
 unit+='\n'
 unit+='\n'.join(function(n,home) for n in
-                ['draw_card_cover','folder_books','hit','home_band_clock_hit','home_band_calendar_hit','card_at','control','on_gesture'])
+                ['draw_card_cover','folder_books','home_cards','focused_card','hit','home_band_clock_hit','home_band_calendar_hit','card_at','control','on_gesture'])
 settings=(root/'main/settings.h').read_text();a=settings.index('typedef enum {\n    APP_READER_KEY_PREV');b=settings.index('} app_reader_key_action_t;',a)+len('} app_reader_key_action_t;');unit+=settings[a:b]
 unit+=r'''
 enum {READER_PANEL_NONE,READER_PANEL_TOOLS};
@@ -91,19 +102,30 @@ int main(void){app_ctx_t ctx={0};
   assert(gesture_at(UI_GESTURE_TAP,x,y,&ctx)==APP_REDRAW_NONE);
   assert(open_calls==old+1&&nav==1&&!s_press_pending);++points;
  }
- // 左右滑动换书：开机停在第一本，左滑看右边下一本，到头不再前进。
- s_view=HOME_ROOT;s_card_page=0;s_card_menu=false;nav=-1;
+ // 左右滑动只记录方向，松手才落位；一次滑动固定翻一张卡，两端夹紧。
+ // A swipe only records its direction and lands on release: one card per swipe, clamped at both ends.
+ s_view=HOME_ROOT;s_card_page=0;s_card_menu=false;s_card_drag=false;s_card_off=0;s_card_flick=0;
  ui_gesture_event_t swipe=(ui_gesture_event_t){UI_GESTURE_SWIPE_L,HOME_CARD_X+120,HOME_CARD_Y+120,HOME_CARD_X+40,HOME_CARD_Y+120};
- assert(on_gesture(&ctx,&swipe)==APP_REDRAW_AREA&&s_card_page==1);
- assert(s_area.x==0&&s_area.y==HOME_CARD_Y-8&&s_area.width==UI_LOCK_WIDTH&&s_area.height==HOME_CARD_H+16);
- assert(on_gesture(&ctx,&swipe)==APP_REDRAW_AREA&&s_card_page==2);
- assert(on_gesture(&ctx,&swipe)==APP_REDRAW_NONE&&s_card_page==2);
- swipe.type=UI_GESTURE_SWIPE_R;assert(on_gesture(&ctx,&swipe)==APP_REDRAW_AREA&&s_card_page==1);
- assert(on_gesture(&ctx,&swipe)==APP_REDRAW_AREA&&s_card_page==0);
- assert(on_gesture(&ctx,&swipe)==APP_REDRAW_NONE&&s_card_page==0);
+ assert(on_gesture(&ctx,&swipe)==APP_REDRAW_NONE&&!s_card_drag); // 没按住就不动 / no drag, no move
+ ui_gesture_event_t drag=(ui_gesture_event_t){UI_GESTURE_MOVE,HOME_CARD_X+120,HOME_CARD_Y+120,HOME_CARD_X+80,HOME_CARD_Y+120};
+ assert(on_gesture(&ctx,&drag)==APP_REDRAW_NONE&&s_card_drag&&s_card_from==0);
+ assert(on_gesture(&ctx,&swipe)==APP_REDRAW_NONE&&s_card_dir==1);
+ s_card_off_max=card_max_off(3);
+ assert(strip_release_offset()==HOME_CARD_PITCH);
+ s_card_from=HOME_CARD_PITCH;s_card_dir=1;
+ assert(strip_release_offset()==s_card_off_max);
+ s_card_from=s_card_off_max;s_card_dir=1;
+ assert(strip_release_offset()==s_card_off_max);
+ s_card_from=0;s_card_dir=-1;
+ assert(strip_release_offset()==0);
+ assert(card_max_off(1)==0&&card_max_off(0)==0);
+ s_card_off=0;assert(card_focus(3)==0);
+ s_card_off=HOME_CARD_PITCH*2;assert(card_focus(3)==2);
+ s_card_off=s_card_off_max;assert(card_focus(3)==1);
+ s_card_drag=false;s_card_flick=0;
  // 卡带外的滑动不动页码。/ A swipe outside the strip never pages.
- s_view=HOME_ROOT;s_card_page=0;
- assert(gesture_at(UI_GESTURE_SWIPE_L,342,HOME_CARD_Y-40,&ctx)==APP_REDRAW_NONE&&s_card_page==0);
+ s_view=HOME_ROOT;s_card_page=0;s_card_off=0;
+ assert(gesture_at(UI_GESTURE_SWIPE_L,342,HOME_CARD_Y-40,&ctx)==APP_REDRAW_NONE&&s_card_page==0&&!s_card_drag);
  // “…”菜单：点开，再点一下只收起，不打开书。
  s_card_menu=false;nav=-1;int old=open_calls;
  int dx=HOME_CARD_X+HOME_CARD_DOTS_CENTER_X,dy=HOME_CARD_ACTION_CENTER_Y;
@@ -119,16 +141,43 @@ int main(void){app_ctx_t ctx={0};
  assert(card_menu_rect(0,0).x==HOME_CARD_X+HOME_CARD_DOTS_CENTER_X-13&&card_menu_rect(0,0).y==HOME_MENU_TOP);
  assert(card_menu_rect(0,2).x+card_menu_rect(0,2).width==UI_LOCK_WIDTH);
  assert(card_menu_rect(0,2).y+card_menu_rect(0,2).height<=UI_NAV_TOP);
+ // “…”三行接上真实动作：标记已读完 / 在文件中显示 / 从继续阅读移除。
+ // The three "..." rows act for real: mark finished, reveal in Files, hide from continue reading.
+ s_view=HOME_ROOT;s_card_page=0;
+ const EpdRect menu=card_menu_rect(0,0);
+ const int mx=menu.x+120;
+ const int row[3]={HOME_MENU_TOP+HOME_MENU_PAD_V+HOME_MENU_ROW_H/2,
+                   HOME_MENU_TOP+HOME_MENU_PAD_V+HOME_MENU_ROW_H*3/2,
+                   HOME_MENU_TOP+HOME_MENU_PAD_V+HOME_MENU_ROW_H*5/2};
+ finished_calls=resume_hidden_calls=reveal_calls=0;action_path[0]=0;action_fail=false;
+ s_card_menu=true;ctx.request_app=NULL;
+ assert(gesture_at(UI_GESTURE_TAP,mx,row[0],&ctx)==APP_REDRAW_PAGE&&!s_card_menu);
+ assert(finished_calls==1&&s_current.finished&&!strcmp(action_path,s_current.path));
+ s_current.finished=false;
+ s_card_menu=true;assert(gesture_at(UI_GESTURE_TAP,mx,row[1],&ctx)==APP_REDRAW_NONE);
+ assert(reveal_calls==1&&ctx.request_app==app_files_page());
+ s_card_menu=true;assert(gesture_at(UI_GESTURE_TAP,mx,row[2],&ctx)==APP_REDRAW_PAGE);
+ assert(resume_hidden_calls==1&&s_current.resume_hidden);
+ s_current.resume_hidden=false;
+ // 保存失败时首页缓存不改，但菜单仍收起。/ A failed save keeps the cache and still closes the menu.
+ action_fail=true;s_card_menu=true;finished_calls=0;
+ assert(gesture_at(UI_GESTURE_TAP,mx,row[0],&ctx)==APP_REDRAW_PAGE&&!s_card_menu&&finished_calls==1&&!s_current.finished);
+ action_fail=false;
  // 打开失败时不切页、不消费点击。/ A failed open switches no page and consumes nothing.
  s_view=HOME_ROOT;s_card_page=0;nav=-1;fail_open=true;open_calls=0;
  assert(gesture_at(UI_GESTURE_TAP,HOME_CARD_X+60,HOME_CARD_Y+60,&ctx)==APP_REDRAW_NONE);
  assert(nav==-1&&open_calls==1);fail_open=false;open_calls=0;
- // 没有书时不占位，也不越界翻页。/ With no book the strip holds no placeholder and never over-pages.
+ // 没有进度时卡带用最近扫描到的书补齐，点卡片仍然开书；连路径都没有才空着。
+ // Without progress the strip fills from the last scan and the card still opens; only with no path
+ // at all does the strip stay empty.
  s_current.has_progress=true;s_recent[0].has_progress=false;s_recent[1].has_progress=false;
  s_view=HOME_ROOT;s_card_page=0;nav=-1;
  assert(gesture_at(UI_GESTURE_TAP,HOME_CARD_X+60,HOME_CARD_Y+60,&ctx)==APP_REDRAW_NONE&&nav==1);
  s_current.has_progress=false;
- assert(gesture_at(UI_GESTURE_TAP,HOME_CARD_X+60,HOME_CARD_Y+60,&ctx)==APP_REDRAW_NONE&&nav==1&&open_calls==1);
+ assert(gesture_at(UI_GESTURE_TAP,HOME_CARD_X+60,HOME_CARD_Y+60,&ctx)==APP_REDRAW_NONE&&nav==1&&open_calls==2);
+ memset(&s_current,0,sizeof(s_current));memset(s_recent,0,sizeof(s_recent));
+ s_view=HOME_ROOT;s_card_page=0;nav=-1;
+ assert(gesture_at(UI_GESTURE_TAP,HOME_CARD_X+60,HOME_CARD_Y+60,&ctx)==APP_REDRAW_NONE&&nav==-1&&open_calls==2);
  // 时钟块和日历块跟着卡带下移：长按进组件页，点击进月阅读记录。
  s_view=HOME_ROOT;s_card_page=2;
  int band_x=120,band_y=640+HOME_BAND_DY+120;
@@ -172,7 +221,7 @@ int main(void){app_ctx_t ctx={0};
   else assert(result==APP_REDRAW_PAGE&&nav==-1&&s_view==SHELF&&ctx.leaf==4&&freed==freed_before+1&&s_reader_panel==READER_PANEL_NONE);
  }
  assert(saved==4&&restored==2);
- printf("PASS: %d card hit points, strip paging clamped at both ends, dots menu open/consume, no-feedback cards and failed-open guard; clock/calendar/avatar moves; screen/key shared return routes retain home or shelf category/page\n",points);
+ printf("PASS: %d card hit points, strip release clamping at both ends, dots menu open/consume with mark-finished, show-in-files and hide-from-continue actions, no-feedback cards and failed-open guard; clock/calendar/avatar moves; screen/key shared return routes retain home or shelf category/page\n",points);
  return 0;
 }
 '''

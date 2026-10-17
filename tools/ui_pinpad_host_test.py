@@ -65,6 +65,9 @@ static uint8_t ui_contrast_gray(uint8_t gray){return gray;}
 int ui_font_title_px(int n,const char *v){(void)v;return n;}
 void ui_font_measure_line_px(int n,const char *v,int *a,int *b){(void)v;*a=n;*b=0;}
 void ui_font_draw_text_px(uint8_t *f,int x,int y,int n,const char *v,enum EpdFontFlags a,uint8_t fg,uint8_t bg,bool bw){(void)f;(void)x;(void)y;(void)n;(void)v;(void)a;(void)bw;assert(fg<16&&bg<16);++fallbacks;}
+/* 宿主玻璃替身：按矩形铺确定灰，跑通圆键绘制与按下/抬手恢复路径。 */
+/* Host glass stand-in: fills the rect with a fixed gray so key painting and press/release restore run. */
+bool ui_nav_glass_panel(uint8_t *f,EpdRect r,int radius,int white,int refract){(void)f;(void)radius;(void)white;(void)refract;for(int y=0;y<r.height;++y)for(int x=0;x<r.width;++x)epd_draw_pixel(r.x+x,r.y+y,240,f);return true;}
 #define free host_free
 #include "ui_pinpad.c"
 #undef free

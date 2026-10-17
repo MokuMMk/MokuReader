@@ -32,6 +32,41 @@ void ui_nav_back(uint8_t *fb, int x, int y);
 /// Whole-cell hits inside the three-cell pill; -1 outside the pill or the navigation band. Touch admission
 /// extends 16 px upward without changing paint or refresh bounds.
 int ui_nav_hit(uint16_t x, uint16_t y);
+/// 液态玻璃面板：模糊 + 边框折射 + 菲涅尔亮边，画进一块圆角矩形。读的是 fb 里已有的页面内容，
+/// 所以必须先画页面再调它。快刷模式退化成不透明白底。返回 false 表示模糊缓冲申请失败、什么都没画，
+/// 调用方应自行退回实心面板。
+/// Liquid-glass panel: blur, bezel refraction and a Fresnel rim inside a rounded rect. It reads the
+/// page already present in fb, so paint the page first. Fast mode degrades to an opaque white ground.
+/// Returns false when the blur buffer cannot be allocated and nothing was painted, so callers can
+/// fall back to a solid panel.
+/// white 是叠在上面那层白色的百分比：苹果用一层白提高玻璃上内容的对比度，0 表示不加。
+/// white is the percentage of a white layer laid on top; Apple uses one to raise the contrast of
+/// what sits on the glass. 0 disables it.
+/// refract 是折射强度百分比：100 为默认边框宽度与位移，调大同时加宽折射影响范围和位移。
+/// refract scales the refraction: 100 is the default bezel width and shift; larger values widen the
+/// refraction band and increase the displacement.
+bool ui_nav_glass_panel(uint8_t *fb, EpdRect rect, int radius, int white, int refract);
+/// 玻璃控件的像素暂存区（PSRAM，按需增长，不释放）。玻璃只模糊一次，拖动/按压时从这里恢复脏区。
+/// Pixel scratch for glass controls (PSRAM, grows on demand, never freed): the glass is blurred once
+/// and drags or presses restore their dirty region from here. NULL 表示无法分配。
+/// NULL when the allocation is unavailable.
+uint8_t *ui_nav_glass_scratch(size_t bytes);
+/// 底栏选中胶囊拖拽：长按选中格后胶囊放大到比底栏略高，跟手左右移动，抬手由主循环切页。
+/// 开始前先把底栏含上下留白存成底图；失败返回 false（不进入拖拽）。
+/// Dock active-capsule drag: holding the active cell grows the capsule slightly taller than the dock
+/// and moves it with the finger; the loop switches pages on release. Begin snapshots the dock band
+/// with its top/bottom margin first and returns false when the snapshot cannot be allocated.
+bool ui_nav_capsule_drag_begin(uint8_t *fb);
+/// 胶囊跟手移动到中心 cx；返回本次需要局部刷新的矩形（胶囊已画好）。
+/// Move the capsule to centre cx and report the area to refresh locally (the capsule is painted).
+bool ui_nav_capsule_drag_move(uint8_t *fb, int cx, EpdRect *dirty);
+/// 结束拖拽并把底栏底图还原到 fb（不推送）。/ Restore the dock band into fb (no presentation).
+void ui_nav_capsule_drag_end(uint8_t *fb);
+/// 拖拽底图的覆盖范围，用于结束后恢复整条底栏。/ Coverage of the drag snapshot, used to restore the band.
+EpdRect ui_nav_capsule_drag_rect(void);
+/// 胶囊中心落在哪一格（0..2，越界夹到两端）；页面不是底栏页时由调用方处理。
+/// Cell under a capsule centre (0..2, clamped to the ends); callers handle pages that are not dock tabs.
+int ui_nav_capsule_tab(int cx);
 /// index 是底栏格号（0..2）；越界时什么也不做。/ index is a dock tab number (0..2); out-of-range does nothing.
 void ui_nav_request(app_ctx_t *ctx, int index);
 

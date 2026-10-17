@@ -7,6 +7,10 @@
 #include "ui_gesture.h"
 typedef struct {
     uint8_t *background;
+    /// 按下键的底图（玻璃键加数字），抬手时恢复；内存不足时为空，此时不画按下内圈。
+    /// Backdrop of the pressed glass key with its digit, restored on release; empty on low memory,
+    /// in which case the pressed inner ring is skipped.
+    uint8_t *key_snapshot;
     char digits[5], title[40], notice[80];
     unsigned count;
     int pressed, dirty_key;

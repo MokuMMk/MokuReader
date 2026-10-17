@@ -18,6 +18,8 @@
  * Approved revision: size and preview live with the UI face; ask before syncing the reading face, and group connection/display/personalization/maintenance.
  * 用户撤回跟手滚动：三种主页模式统一恢复一次手势推进一段列表并差分刷新的原逻辑，无惯性、浅墨或停稳补刷。
  * User rollback: all main modes return to one discrete list step per gesture with differential updates, without inertia, light motion ink or idle restoration.
+ * 用户修订：设置主页去掉分组卡片描边，保留每个栏目的白色底块，选项之间只用灰色细线分隔。
+ * User revision: the main settings page drops group card outlines, keeps each section's white panel, and separates options with thin gray rules only.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -346,6 +348,7 @@ static EpdRect system_font_item_rect(int slot) {
 static EpdRect system_font_sync_button(bool sync) { return (EpdRect){sync ? 351 : 72,683,261,74}; }
 static void draw_system_font_sync(uint8_t *fb) {
     // 仅一个有界弹窗，不额外打开阅读字体。/ One bounded dialog; never load the reading face here.
+    ui_draw_popup_shadow(fb,(EpdRect){48,389,588,401},28);
     settings_card(fb,(EpdRect){48,389,588,401},28,UI_GRAY_WHITE,0x58);
     ui_text_fixed_vc(fb,342,448,32,"同步到阅读字体？",EPD_DRAW_ALIGN_CENTER,false);
     char name[80]; snprintf(name,sizeof(name),"已选择「%s」",system_font_label(s_font_sync_path));
@@ -493,8 +496,11 @@ static bool time_save(void) {
 }
 
 static void settings_card(uint8_t *fb, EpdRect rect, int radius, uint8_t fill, uint8_t edge) {
+    // 白色底块直接放在灰页面上，不再描边；edge 仅保留给调用点的语义，不绘制。
+    // White panels sit on the gray page without an outline; edge stays in the call sites for their
+    // semantics and is not drawn.
+    (void)edge;
     ui_fill_round_rect(fb, rect, radius, fill);
-    ui_draw_control_frame(fb, rect, radius, edge);
 }
 static void settings_divider(uint8_t *fb, int y, int x, int width) {
     ui_draw_separator(fb, y, x, width, 0x60);
@@ -720,21 +726,23 @@ static void setting_group(uint8_t *fb, int title_y, const char *title,
     const int row_height = SETTINGS_ROW_H;
     title_y -= s_main_scroll;
     card_y -= s_main_scroll;
-    // 屏外的行不测字、不生成字形；保留卡片边界与原滚动坐标。
+    // 屏外的行不测字、不生成字形；保留原滚动坐标。
     // 主列表一直画到屏幕下沿，让底栏的半透明毛玻璃胶囊有内容可模糊；二级页仍在导航带之上收住。
-    // Skip off-screen glyph work while preserving card boundaries and scroll coordinates.
+    // 每个栏目保留白色底块，但不再描边；选项之间只用灰色细线分隔。
+    // Skip off-screen glyph work while preserving scroll coordinates.
     // The main list paints down to the screen edge so the dock's translucent frosted pill has content
     // to blur; sub-pages still stop at the navigation band.
+    // Each group keeps its white panel but drops the outline; thin gray rules between options remain
+    // the only inner boundary.
     const int bottom = UI_LOCK_HEIGHT;
     if (card_y + count * row_height <= 160 || title_y >= bottom) return;
     if (title_y + ui_text_effective_px(20) > 160 && title_y < bottom)
         ui_text(fb, 42, title_y, 20, title, EPD_DRAW_ALIGN_LEFT, false);
-    settings_card(fb, (EpdRect){36, card_y, 612, count * row_height}, 22,
-                  UI_GRAY_WHITE, 0x70);
+    ui_fill_round_rect(fb, (EpdRect){36, card_y, 612, count * row_height}, 22, UI_GRAY_WHITE);
     for (int i = 0; i < count; ++i) {
         int y = card_y + i * row_height;
         if (y + row_height <= 160 || y >= bottom) continue;
-        if (i) settings_divider(fb, y, 88, 544);
+        if (i) settings_divider(fb, y, 50, 584);
         setting_icon(fb, icons[i], 67, y + row_height / 2);
         char shown[128]; snprintf(shown,sizeof(shown),"%s",values[i]);
         int value_width = 594 - 100 - 20 - ui_text_fixed_width_px(ui_text_effective_px(25),labels[i]);
@@ -753,11 +761,12 @@ static void setting_toggle(uint8_t *fb, int y, const char *title, const char *de
     settings_card(fb, (EpdRect){36, y, 612, 126}, 22, UI_GRAY_WHITE, 0x70);
     ui_text(fb, 59, y + 24, 27, title, EPD_DRAW_ALIGN_LEFT, false);
     ui_text(fb, 59, y + 75, 19, detail, EPD_DRAW_ALIGN_LEFT, false);
+    // 开关把手靠轨道和白圆填充区分，不再描边。
+    // The switch knob separates by the track and white circle fills, without an outline.
     EpdRect track = {555, y + 43, 69, 39};
     ui_fill_round_rect(fb, track, 19, active ? 0x58 : 0xc4);
     int cx = active ? track.x + 49 : track.x + 20;
     epd_fill_circle(cx, track.y + 19, 16, UI_GRAY_WHITE, fb);
-    epd_draw_circle(cx, track.y + 19, 16, 0x78, fb);
 }
 
 static void draw_style_thumbnail(uint8_t *fb, int style, int top) {
@@ -805,10 +814,9 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
     ui_clear_page(fb);
-
-    if (s_page == SETTINGS_MAIN || s_page == SETTINGS_SHELF_STYLE)
-        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH,
-                                    s_page == SETTINGS_MAIN ? UI_LOCK_HEIGHT : UI_NAV_TOP},
+    // 设置的所有页面统一灰底：白色信息卡和弹窗直接浮在灰面上，不再描边。
+    // Every settings page shares the gray ground so white cards and dialogs float without outlines.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT},
                       app_settings_main_fast_refresh() && s_page == SETTINGS_MAIN ? 0xf0 : 0xe0, fb);
     ui_nav_status(fb);
     if (s_page == SETTINGS_LOCK_PIN) {
@@ -895,11 +903,12 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         for (int i = 0; i < 5; ++i) {
             int x = 36 + i * 122;
             ui_text(fb, x + 52, 300, 24, labels[i], EPD_DRAW_ALIGN_CENTER, false);
-            ui_draw_control_frame(fb, (EpdRect){x, 354, 106, 62}, 8, UI_GRAY_BLACK);
+            // 加减值块用白底区分，不再描边。/ The stepper blocks use white fills instead of outlines.
+            ui_fill_round_rect(fb, (EpdRect){x, 354, 106, 62}, 8, UI_GRAY_WHITE);
             ui_text_vc(fb, x + 53, 385, 30, "+", EPD_DRAW_ALIGN_CENTER, false);
             char value[8]; snprintf(value, sizeof(value), i == 0 ? "%04d" : "%02d", values[i]);
             ui_text(fb, x + 53, 456, i == 0 ? 34 : 39, value, EPD_DRAW_ALIGN_CENTER, false);
-            ui_draw_control_frame(fb, (EpdRect){x, 535, 106, 62}, 8, UI_GRAY_BLACK);
+            ui_fill_round_rect(fb, (EpdRect){x, 535, 106, 62}, 8, UI_GRAY_WHITE);
             ui_text_vc(fb, x + 53, 566, 30, "−", EPD_DRAW_ALIGN_CENTER, false);
         }
         ui_text(fb, 36, 649, 23, "点上方 + 或下方 − 调整数字", EPD_DRAW_ALIGN_LEFT, false);
@@ -1070,8 +1079,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         }
         if (s_wallpaper_confirm) {
             EpdRect dialog = {68, 435, 548, 306};
+            ui_draw_popup_shadow(fb, dialog, 26);
             ui_fill_round_rect(fb, dialog, 26, UI_GRAY_WHITE);
-            ui_draw_control_frame(fb, dialog, 26, 0x50);
             ui_text_vc(fb, 342, 503, 31, "设为壁纸锁屏？", EPD_DRAW_ALIGN_CENTER, false);
             ui_text_vc(fb, 342, 565, 20, "确认后，短按电源键将显示此图片", EPD_DRAW_ALIGN_CENTER, false);
             EpdRect cancel = {94, 643, 232, 68}, confirm = {358, 643, 232, 68};
@@ -1237,7 +1246,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         if (!l.device_rows)
             ui_text(fb, 44, l.devices_top - scroll + 18, 23, "附近还没有发现设备",
                     EPD_DRAW_ALIGN_LEFT, false);
-        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, UI_GRAY_WHITE, fb);
+        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, 0xe0, fb);
         ui_nav_status(fb);
         back_header(fb, "扫描设备");
         ui_nav_draw(fb, 2);
@@ -1311,7 +1320,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
         }
         ui_text(fb, 48, l.footer_top, 20, "上下、左右及 PageUp / PageDown 均可翻页", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 48, l.footer_top + 34, 20, "仅支持 BLE 翻页器，按键只在阅读时生效", EPD_DRAW_ALIGN_LEFT, false);
-        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, UI_GRAY_WHITE, fb);
+        ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, 190}, 0xe0, fb);
         ui_nav_status(fb);
         back_header(fb, "蓝牙翻页器");
         ui_nav_draw(fb, 2);
@@ -1319,7 +1328,8 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     }
     const int profile_y=180-s_main_scroll, profile_h=settings_profile_height();
     if (profile_y+profile_h>160) {
-        settings_card(fb,(EpdRect){36,profile_y,612,profile_h},24,UI_GRAY_WHITE,0x70);
+        // 资料区同样保留白色底块、去掉描边。/ The profile block keeps its white panel and drops the outline.
+        ui_fill_round_rect(fb,(EpdRect){36,profile_y,612,profile_h},24,UI_GRAY_WHITE);
         int avatar_y=profile_y+(profile_h-82)/2;
         bool avatar_ok=s_avatar_ready;
         if (avatar_ok) ui_wallpaper_draw_avatar(fb,s_avatar_pixels,(EpdRect){57,avatar_y,82,82},20);

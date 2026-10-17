@@ -24,11 +24,15 @@
  * User revision: Kehai seconds hold unchanged face pixels to avoid rectangular gray-background flashes; fast mode drives binary dot differences only.
  * 用户修订：首页题头与书架、文件和设置共用左侧起点、顶边及52px名义字号，仍使用当前系统字体。
  * User revision: Home's title matches the shelf/files/settings left edge, top and nominal 52px size in the active system face.
+ * 用户修订：续读卡「…」菜单接入标记已读完、在文件中显示、从继续阅读移除；三种动作都不删文件也不清进度。
+ * User revision: the resume card's "..." menu marks finished, reveals the book in Files and removes it from
+ * continue reading; none of the three deletes files or clears progress.
  */
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <esp_timer.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -75,6 +79,9 @@ typedef struct {
     time_t modified;
     book_progress_t progress;
     bool has_progress;
+    // 书架标记：已读完、或用户把这本书移出了继续阅读；两种都不进首页卡带。
+    // Shelf marks: marked finished, or removed from continue reading; neither enters the Home strip.
+    bool finished, resume_hidden;
 } home_book_t;
 
 static home_book_t s_current, s_recent[6];
@@ -96,6 +103,10 @@ static bool s_books_cache_valid;
 static bool s_cached_sd_present;
 static bool s_cached_sd_mounted;
 static unsigned s_cached_store_revision;
+// 逐书标记的 RAM 版本；标记变化同样只重扫首页，不动内容版本和缓存任务。
+// RAM revision of the per-book marks; a mark change only rescans Home, never the content revision
+// or the cache jobs.
+static unsigned s_cached_flag_revision;
 static char s_cached_books_dir[128];
 static char s_cached_last_path[BOOK_STORE_PATH_MAX];
 static EpdRect s_area;
@@ -132,15 +143,19 @@ static uint32_t s_folder_key;
 #define HOME_LEAD_X 63
 #define HOME_LEAD_CENTER_Y 184
 #define HOME_LEAD_PX 48
-#define HOME_AVATAR_X 549
-#define HOME_AVATAR_Y 74
-#define HOME_AVATAR_SIDE 75
+#define HOME_AVATAR_X 546   // 与设置页共用 82 槽位，圆心不变 / shares the settings page's 82 slot, same centre
+#define HOME_AVATAR_Y 71
+#define HOME_AVATAR_SIDE 82  // ui_avatar 只支持 60/82 两档，75 拿不到槽位 / ui_avatar only has 60 and 82; 75 has no slot
 #define HOME_CARD_X 69
 #define HOME_CARD_Y 231
 #define HOME_CARD_W 344
 #define HOME_CARD_H 451
 #define HOME_CARD_GAP 60
 #define HOME_CARD_PITCH (HOME_CARD_W + HOME_CARD_GAP)
+// 滚到尽头时最后一张卡的右边缘离屏幕右边留这么多，不要贴死。
+// At the end the last card keeps this much clear of the screen's right edge instead of butting
+// against it.
+#define HOME_CARD_RIGHT_GAP 24
 #define HOME_CARD_RADIUS 25
 // 卡带一次显示一本，左右滑动换下一本；第三本滑到头就不再前进。
 // The strip shows one book at a time and swipes to the next; the third book is the last stop.
@@ -174,11 +189,76 @@ static EpdRect s_pressed;
 static bool s_press_pending;
 // 续读卡只显示最近三本有进度的书；没进度时不占位。
 // The strip shows the three most recent books with progress and leaves no placeholder when there are none.
-static int s_card_page;
+static int s_card_page; // 焦点卡号，由偏移量导出 / focused card, derived from the offset
 static bool s_card_menu;
+// 卡带自由滑动：偏移量是连续像素，松手后按测得的速度做惯性，不再一格一格吸附。
+// s_card_page 只用来标记「当前焦点是哪一张」，给圆点和卡片菜单用。
+// The strip scrolls freely: the offset is continuous pixels and releasing applies the measured
+// velocity as inertia instead of snapping card by card. s_card_page only marks which card is
+// focused, for the dots and the card menu.
+static int s_card_off;         // 当前横向偏移 / current horizontal offset
+static int s_card_off_max;     // 允许的最大偏移 / largest allowed offset
+static bool s_card_drag;       // 手指正在拖卡带 / the finger is dragging the strip
+static int s_card_from;        // 按下时的偏移 / offset at press
+static int s_card_flick;       // 剩余惯性速度，像素每秒 / remaining inertia in px per second
+static int s_card_flick_ms;    // 惯性上一帧的时刻 / last inertia step time
+static int s_card_last_x;      // 速度采样：上次 x / last sampled x
+static int s_card_to_x;        // 拖动中手指最新 x / latest finger x while dragging
+static int s_card_dir;         // 1 向左（下一张）/-1 向右 / 1 leftwards (next card), -1 rightwards
+static int64_t s_card_last_ms; // 速度采样：上次时刻 / last sampled time
 static EpdRect card_rect(int page, int index) {
-    return (EpdRect){HOME_CARD_X + index * HOME_CARD_PITCH - page * HOME_CARD_PITCH,
+    (void)page;
+    return (EpdRect){HOME_CARD_X + index * HOME_CARD_PITCH - s_card_off,
                      HOME_CARD_Y, HOME_CARD_W, HOME_CARD_H};
+}
+/// 最大偏移：滚到尽头时最后一张卡的右边缘贴住屏幕右边，后面不留空白。
+/// Largest offset: at the end the last card's right edge sits on the screen edge with no blank
+/// after it.
+static int card_max_off(unsigned count) {
+    if (count < 2) return 0;
+    const int max = HOME_CARD_X + (int)(count - 1) * HOME_CARD_PITCH + HOME_CARD_W
+                    - UI_LOCK_WIDTH + HOME_CARD_RIGHT_GAP;
+    return max > 0 ? max : 0;
+}
+/// 偏移量到焦点卡号：哪张卡盖住设计位置就算哪张。
+/// Offset to the focused card: whichever card covers the design position.
+static int card_focus(unsigned count) {
+    if (!count) return 0;
+    int index = (s_card_off + HOME_CARD_PITCH / 2) / HOME_CARD_PITCH;
+    if (index < 0) index = 0;
+    if (index >= (int)count) index = (int)count - 1;
+    return index;
+}
+static EpdRect card_strip_area(void);
+static unsigned home_cards(home_book_t *books[HOME_CARDS]);
+static void render_card(uint8_t *fb, const home_book_t *item, int page, int index, bool focused);
+/// 松手后落位：一次滑动固定翻一张卡，两端夹紧。这段落位与 on_tick 里的其他时钟逻辑
+/// 分开，便于调试和宿主测试单独验证边界。
+/// Release landing: one swipe advances exactly one card and clamps at both ends. Keeping it apart
+/// from the clock work in on_tick makes the boundary checkable on the host.
+static int strip_release_offset(void) {
+    int next=s_card_from+(s_card_dir>0?HOME_CARD_PITCH:-HOME_CARD_PITCH);
+    if(next<0)next=0;
+    if(next>s_card_off_max)next=s_card_off_max;
+    return next;
+}
+/// 只重画卡带那一条。APP_REDRAW_AREA 的契约是回调先画好 fb、主循环只推 area_hint()，
+/// 所以拖动和惯性每帧都必须先调它，否则偏移量在变、推上去的却还是旧画面。
+/// Repaint only the strip band. APP_REDRAW_AREA means the callback paints the framebuffer and the
+/// loop only presents the hint, so every drag and inertia frame must call this first, or the offset
+/// changes while the old pixels are what actually gets pushed.
+static void strip_paint(app_ctx_t *ctx) {
+    home_book_t *cards[HOME_CARDS];unsigned count=home_cards(cards);
+    s_card_off_max=card_max_off(count);
+    if(s_card_off>s_card_off_max)s_card_off=s_card_off_max;
+    if(s_card_off<0)s_card_off=0;
+    s_card_page=card_focus(count);
+    ui_fill_rect_fast(card_strip_area(),UI_GRAY_WHITE,ctx->fb);
+    for(unsigned i=0;i<count;++i) {
+        const EpdRect card=card_rect(s_card_page,(int)i);
+        if(card.x>=UI_LOCK_WIDTH||card.x+card.width<=0)continue;
+        render_card(ctx->fb,cards[i],s_card_page,(int)i,i==(unsigned)s_card_page);
+    }
 }
 static EpdRect card_hit_rect(int page, int index) {
     EpdRect r = card_rect(page, index);
@@ -304,6 +384,10 @@ static void scan_books(void) {
     for (int i=0;i<7;++i) {
         home_book_t *b=book_at(i);
         if (!b->path[0]) continue;
+        // 标记只在扫描时读一次：首页每帧都要取卡，不能逐帧问 NVS。
+        // Read the marks once per scan: Home picks cards every frame and must not query NVS there.
+        b->finished=app_book_finished(b->path);
+        b->resume_hidden=app_book_resume_hidden(b->path);
         title_for(b);
         char metadata_title[128];
         if (book_epub_metadata_cached(b->path,metadata_title,sizeof(metadata_title),b->author,sizeof(b->author))==ESP_OK && metadata_title[0])
@@ -333,6 +417,7 @@ static void refresh_progress(void) {
 static void remember_scan_state(const read_pico_sd_info_t *sd) {
     s_books_cache_valid = true;
     s_cached_store_revision = book_store_revision();
+    s_cached_flag_revision = app_book_shelf_flag_revision();
     s_cached_sd_present = sd->present;
     s_cached_sd_mounted = sd->mounted;
     snprintf(s_cached_books_dir, sizeof(s_cached_books_dir), "%s", app_settings_books_dir());
@@ -429,13 +514,6 @@ static bool load_cover(home_book_t *item,int slot) {
 static void label(uint8_t *fb,int x,int y,int px,const char *text,enum EpdFontFlags align,uint8_t gray) {
     if (gray >= 0xf0) ui_text_fixed_vc(fb,x,y,px,text,align,true);
     else ui_text_fixed_ink_vc(fb,x,y,px,text,align,gray);
-}
-// 三像素边线均向内加粗，保持点击及局部刷新边界。/ Three-pixel rules grow inward, preserving hit and dirty bounds.
-static void home_frame(uint8_t *fb,EpdRect box,int radius) {
-    for(int i=0;i<3;++i)ui_draw_round_rect(fb,ui_inset_rect(box,i),radius>i?radius-i:0,0x30);
-}
-static void circle_frame(uint8_t *fb,int x,int y,int radius) {
-    for(int i=0;i<3&&i<radius;++i)epd_draw_circle(x,y,radius-i,0x30,fb);
 }
 static bool date_now(struct tm *out) {
     time_t now=time(NULL);
@@ -592,8 +670,8 @@ static void render_card(uint8_t *fb,const home_book_t *item,int page,int index,b
 }
 static unsigned folder_books(home_book_t *books[3]) {
     unsigned n=0;
-    if(s_current.path[0]&&s_current.has_progress)books[n++]=&s_current;
-    for(int i=0;i<6&&n<3;++i)if(s_recent[i].path[0]&&s_recent[i].has_progress)books[n++]=&s_recent[i];
+    if(s_current.path[0]&&s_current.has_progress&&!s_current.finished&&!s_current.resume_hidden)books[n++]=&s_current;
+    for(int i=0;i<6&&n<3;++i)if(s_recent[i].path[0]&&s_recent[i].has_progress&&!s_recent[i].finished&&!s_recent[i].resume_hidden)books[n++]=&s_recent[i];
     return n;
 }
 static uint32_t folder_key(void) {
@@ -617,12 +695,19 @@ static unsigned home_cards(home_book_t *books[HOME_CARDS]) {
     for(int i=0;i<HOME_CARDS;++i)all[i+1]=&s_recent[i];
     for(int i=0;i<HOME_CARDS+1&&n<HOME_CARDS;++i) {
         home_book_t *b=all[i];
-        if(!b->path[0])continue;
+        if(!b->path[0]||b->finished||b->resume_hidden)continue;
         bool seen=false;
         for(unsigned k=0;k<n;++k)if(books[k]==b){seen=true;break;}
         if(!seen)books[n++]=b;
     }
     return n;
+}
+// 卡片菜单针对的是当前焦点那张卡；卡带为空时没有可操作的书。
+// The card menu acts on the focused card; an empty strip has nothing to act on.
+static home_book_t *focused_card(void) {
+    home_book_t *cards[HOME_CARDS];const unsigned count=home_cards(cards);
+    if(s_card_page<0||(unsigned)s_card_page>=count)return NULL;
+    return cards[s_card_page];
 }
 static bool prepare_folder(void) {
     home_book_t *books[3];unsigned n=folder_books(books);ui_home_cover_t covers[3]={0};
@@ -674,14 +759,34 @@ static void render_root(uint8_t *fb) {
     ui_text_title_vc(fb,HOME_LEAD_X,HOME_LEAD_CENTER_Y,HOME_LEAD_PX,"继续阅读","继续阅读",EPD_DRAW_ALIGN_LEFT);
     if(s_avatar_ready)ui_wallpaper_draw_avatar(fb,s_avatar,(EpdRect){HOME_AVATAR_X,HOME_AVATAR_Y,HOME_AVATAR_SIDE,HOME_AVATAR_SIDE},HOME_AVATAR_SIDE/2);
     else {
-        epd_fill_circle(HOME_AVATAR_X+HOME_AVATAR_SIDE/2,HOME_AVATAR_Y+HOME_AVATAR_SIDE/2,HOME_AVATAR_SIDE/2,0x30,fb);
-        label(fb,HOME_AVATAR_X+HOME_AVATAR_SIDE/2,HOME_AVATAR_Y+HOME_AVATAR_SIDE/2,30,"K",EPD_DRAW_ALIGN_CENTER,0xff);
+        // 没配头像时照设计稿的 .mk-avatar 画：浅色圆底 + 人形，读起来是“还没有头像”，
+        // 而不是一个深色字母章。配色跟设计稿的 --mk-card 底一致。
+        // Without a configured avatar follow the design's .mk-avatar: a light circular base with a person
+        // glyph, which reads as "no avatar yet" instead of a dark letter stamp. The tone matches the
+        // mock-up's --mk-card base.
+        const int side=HOME_AVATAR_SIDE;
+        ui_fill_round_rect(fb,(EpdRect){HOME_AVATAR_X,HOME_AVATAR_Y,side,side},side/2,0xd0);
+        const int head=side*26/100,body=side*46/100;
+        const int cx=HOME_AVATAR_X+side/2;
+        const int head_top=HOME_AVATAR_Y+side*24/100;
+        ui_fill_round_rect(fb,(EpdRect){cx-head/2,head_top,head,head},head/2,0x80);
+        ui_fill_round_rect(fb,(EpdRect){cx-body/2,head_top+head+side*6/100,body,body},body/2,0x80);
     }
     HOME_STAGE("header");
     home_book_t *cards[HOME_CARDS];unsigned count=home_cards(cards);
-    if(s_card_page>=(int)count)s_card_page=count?(int)count-1:0;
+    s_card_off_max=card_max_off(count);
+    if(s_card_off>s_card_off_max)s_card_off=s_card_off_max;
+    if(s_card_off<0)s_card_off=0;
+    s_card_page=card_focus(count);
     if(!count)label(fb,342,HOME_CARD_Y+HOME_CARD_H/2,23,"打开一本书后，会在这里继续阅读",EPD_DRAW_ALIGN_CENTER,0x60);
-    for(unsigned i=0;i<count;++i)render_card(fb,cards[i],s_card_page,(int)i,i==(unsigned)s_card_page);
+    for(unsigned i=0;i<count;++i) {
+        // 移到屏外的卡不画：拖动时每帧都重绘整条卡带，白画只会拖慢跟手。
+        // Skip cards that left the screen: the strip repaints every drag frame, so wasted paint
+        // costs feel.
+        const EpdRect card=card_rect(s_card_page,(int)i);
+        if(card.x>=UI_LOCK_WIDTH||card.x+card.width<=0)continue;
+        render_card(fb,cards[i],s_card_page,(int)i,i==(unsigned)s_card_page);
+    }
     HOME_STAGE("cards");
     const int band=HOME_BAND_DY;
     if(app_settings_home_component()==APP_HOME_FOLDER) {
@@ -708,13 +813,16 @@ static void render_root(uint8_t *fb) {
     HOME_STAGE("nav");
 #undef HOME_STAGE
 }
-// 卡片菜单：设计稿只给外观，三个动作这一轮不接行为。
-// Card menu: this round matches the design's appearance only; the three actions are not wired yet.
+// 卡片菜单：标记已读完 / 在文件中显示 / 从继续阅读移除；行高与图标照设计稿。
+// Card menu: mark finished, reveal in Files and remove from continue reading, with the design's
+// row height and icons.
 static void render_card_menu(uint8_t *fb) {
     if(!s_card_menu)return;
     const EpdRect menu=card_menu_rect(s_card_page,s_card_page);
+    // 卡片菜单靠浅灰底和投影浮在封面上，不再描边。
+    // The card menu floats over the cover with a light gray surface and a shadow, no outline.
+    ui_draw_popup_shadow(fb,menu,HOME_MENU_RADIUS);
     ui_fill_round_rect(fb,menu,HOME_MENU_RADIUS,0xf0);
-    ui_draw_control_frame(fb,menu,HOME_MENU_RADIUS,0xa0);
     static const ui_icon_t icons[3]={UI_ICON_CIRCLE_CHECK,UI_ICON_FILE,UI_ICON_TRASH};
     static const char *const rows[3]={"标记为已读完","在文件中显示","从继续阅读移除"};
     for(int i=0;i<3;++i) {
@@ -735,10 +843,10 @@ static void render_goal(uint8_t *fb) {
     snprintf(value,sizeof(value),"%u 分钟",today_seconds()/60);label(fb,648,678,30,value,EPD_DRAW_ALIGN_RIGHT,0);
     label(fb,36,744,30,"每日闭环目标",EPD_DRAW_ALIGN_LEFT,0);
     label(fb,36,784,22,"达到目标的日期会显示下划线",EPD_DRAW_ALIGN_LEFT,0x60);
+    // 灰底胶囊和白圆钮直接分层，不再勾边。
+    // The gray capsule and white knobs layer by fill alone, without outlines.
     ui_fill_round_rect(fb,(EpdRect){36,820,612,114},57,0xe0);
-    home_frame(fb,(EpdRect){36,820,612,114},57);
     epd_fill_circle(99,877,43,0xff,fb);epd_fill_circle(585,877,43,0xff,fb);
-    circle_frame(fb,99,877,43);circle_frame(fb,585,877,43);
     ui_fill_rect_fast((EpdRect){87,876,24,3},s_goal_draft==5?0xa0:0x30,fb);
     ui_fill_rect_fast((EpdRect){573,876,24,3},s_goal_draft==180?0xa0:0x30,fb);
     ui_fill_rect_fast((EpdRect){584,866,3,24},s_goal_draft==180?0xa0:0x30,fb);
@@ -746,14 +854,13 @@ static void render_goal(uint8_t *fb) {
     label(fb,342,902,20,"分钟",EPD_DRAW_ALIGN_CENTER,0x50);
     const unsigned presets[]={15,30,60};
     for(unsigned i=0;i<3;++i) {
-        EpdRect box={36+i*214,970,184,56};ui_fill_round_rect(fb,box,28,s_goal_draft==presets[i]?0xe0:0xf0);home_frame(fb,box,28);
+        EpdRect box={36+i*214,970,184,56};ui_fill_round_rect(fb,box,28,s_goal_draft==presets[i]?0xc8:0xe8);
         snprintf(value,sizeof(value),"%u 分钟",presets[i]);label(fb,box.x+92,998,25,value,EPD_DRAW_ALIGN_CENTER,0x20);
     }
     if(s_save_error)label(fb,342,1060,23,"保存未完成，请再试一次",EPD_DRAW_ALIGN_CENTER,0x30);
     ui_fill_round_rect(fb,(EpdRect){36,1090,612,72},28,0x20);label(fb,342,1126,28,"保存",EPD_DRAW_ALIGN_CENTER,0xff);
 }
 static void render_component_controls(uint8_t *fb) {
-    circle_frame(fb,68,504,32);circle_frame(fb,616,504,32);
     ui_draw_icon(fb,68,504,34,UI_ICON_CHEVRON_LEFT,0x30);ui_draw_icon(fb,616,504,34,UI_ICON_CHEVRON_RIGHT,0x30);
     bool current=s_component_browse==app_settings_home_component();
     bool pressed=s_press_pending&&s_pressed.y==1060;
@@ -890,10 +997,11 @@ static void on_enter(app_ctx_t *ctx) {
     (void)ctx;s_view=HOME_ROOT;s_clock_pending=s_time_pending=s_widget_pending=s_component_pending=false;s_press_pending=false;s_save_error=false;s_time_stamp=s_widget_stamp=-1;s_motion_ms=-100;
     // 每次回到首页都从第一本开始，并收起卡片菜单。
     // Every return to Home starts on the first book with the card menu closed.
-    s_card_page=0;s_card_menu=false;
+    s_card_page=0;s_card_menu=false;s_card_off=0;s_card_flick=0;s_card_drag=false;
     s_home_force_full_once=app_settings_home_full_refresh();refresh_days();avatar_prepare_state();
     read_pico_sd_info_t sd={0};esp_err_t error=read_pico_sd_get_info(&sd);
     bool same=s_books_cache_valid&&error!=ESP_ERR_NOT_FINISHED&&s_cached_store_revision==book_store_revision()&&
+        s_cached_flag_revision==app_book_shelf_flag_revision()&&
         s_cached_sd_present==sd.present&&s_cached_sd_mounted==sd.mounted&&!strcmp(s_cached_books_dir,app_settings_books_dir());
     char last[BOOK_STORE_PATH_MAX]={0};book_progress_last_path(last,sizeof(last));
     bool changed=strcmp(last,s_cached_last_path);
@@ -921,6 +1029,50 @@ static void on_media_ready(app_ctx_t *ctx) {(void)ctx;s_books_cache_valid=false;
 static app_redraw_t on_tick(app_ctx_t *ctx) {
     clock_base_prepare();
     if(ctx->consumed||(ctx->touch&&ctx->touch->touched))return APP_REDRAW_NONE;
+    // 手势识别器只在甩动或轻点时才发事件，「拖动过容差但不算甩动」的慢拖松开时什么都不发。
+    // 所以松手不能靠事件判断：on_tick 在手指按住时已经返回，走到这里就说明刚松开。
+    // The recogniser only emits on a swipe or a tap, so a slow drag that released after the slop
+    // produces nothing at all. Release cannot be read from events: on_tick returns while the finger
+    // is down, so reaching this line means the finger just lifted.
+    if(s_card_drag) {
+        s_card_drag=false;
+        home_book_t *cards[HOME_CARDS];s_card_off_max=card_max_off(home_cards(cards));
+        // 手指向左划为正，卡带跟着往左移；总位移直接就是偏移量，1:1。
+        // A leftward drag is positive and moves the strip left; total travel maps 1:1 to offset.
+        // 不再按手指行程换算：一次滑动固定翻一张卡。触摸上报的行程比手指实际划过的短很多，
+        // 按行程换算永远算不准，固定一卡一步反而可预期。
+        // No more travel arithmetic: one swipe advances exactly one card. The reported travel is much
+        // shorter than the real finger path, so scaling it never lands where expected, while a fixed
+        // one-card step always does.
+        int next=strip_release_offset();
+        if(next!=s_card_off) {
+            s_card_off=next;s_card_menu=false;strip_paint(ctx);
+            s_area=card_strip_area();return APP_REDRAW_AREA;
+        }
+    }
+    // 松手后的惯性：按速度继续滑并按时间衰减，撞到两端立刻停。
+    // Inertia after release: keep sliding at the measured velocity with exponential decay, stopping
+    // at once on either end.
+    // 设置页的做法不播惯性，这里保留同样的选择：分段推进后停在完整画面上。
+    // The settings approach has no release inertia; the strip keeps that choice and rests on a
+    // complete picture.
+    if(s_view==HOME_ROOT&&!s_card_drag&&s_card_flick) {
+        home_book_t *cards[HOME_CARDS];s_card_off_max=card_max_off(home_cards(cards));
+        const int64_t now=esp_timer_get_time()/1000;
+        int dt=(int)(now-s_card_flick_ms);
+        if(dt<1)dt=1;
+        if(dt>120)dt=120; // 慢帧也别一步跳太远，但别把惯性压扁 / cap the jump on slow frames without flattening the glide
+        int offset=s_card_off+(int)((int64_t)s_card_flick*dt/1000);
+        if(offset<0){offset=0;s_card_flick=0;}
+        if(offset>s_card_off_max){offset=s_card_off_max;s_card_flick=0;}
+        // 按时间衰减，0.998/ms 就是 iOS 的正常滚动减速率；按帧乘 0.8 的话 300ms 就停死了。
+        // Decay in time, not per frame: 0.998 per ms is iOS's normal deceleration rate.
+        // Multiplying by 0.8 per frame kills the glide within 300 ms.
+        s_card_flick-=s_card_flick*dt/500;
+        if(s_card_flick>-30&&s_card_flick<30)s_card_flick=0;
+        s_card_flick_ms=(int)now;
+        if(offset!=s_card_off){s_card_off=offset;s_card_menu=false;strip_paint(ctx);s_area=card_strip_area();return APP_REDRAW_AREA;}
+    }
     if(s_view==HOME_COMPONENT&&s_component_pending)return APP_REDRAW_AREA;
     bool folder_preview=s_view==HOME_COMPONENT&&s_component_browse==APP_HOME_FOLDER;
     if(s_view==HOME_ROOT||folder_preview){
@@ -1029,23 +1181,35 @@ static EpdRect control(int x,int y) {
 static app_redraw_t on_gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
     if(ev->type==UI_GESTURE_PRESS) {s_pressed=control(ev->x0,ev->y0);s_press_pending=s_pressed.width>0;if(s_press_pending){s_area=control_feedback_area(s_pressed);return APP_REDRAW_AREA;}return APP_REDRAW_NONE;}
     bool restore=s_press_pending;
+    // 手指划过多少就偏移多少：拖动过程只记录、不推屏。每次 MOVE 重绘整条卡带（684×467）
+    // 在墨水屏上要一两百毫秒，必然追不上手；改成一整段位移在松手时一次落位，只刷一帧完整画面。
+    // The strip moves by however far the finger travelled. The drag only records, because repainting
+    // the 684x467 band per move costs 100-200 ms on e-paper and can never keep up. The whole travel
+    // is applied in one go on release, presenting a single complete frame.
+    if(s_view==HOME_ROOT&&!s_card_menu&&ev->y0>=HOME_CARD_Y&&ev->y0<HOME_CARD_Y+HOME_CARD_H) {
+        // 不接管 PRESS：轻点必须继续走原来的路径，接管了书就打不开了。
+        // The press is left alone: a tap has to keep taking the original path, or books stop
+        // opening. Tracking starts on the first move instead.
+        if(ev->type==UI_GESTURE_MOVE) {
+            if(!s_card_drag) {
+                s_card_drag=true;s_card_from=s_card_off;
+                s_card_last_x=ev->x0;s_card_to_x=ev->x;
+            } else s_card_to_x=ev->x; // 只记位置，不画 / record only, never paint
+            s_card_dir=(int)ev->x<(int)s_card_last_x?1:-1;
+            return APP_REDRAW_NONE;
+        }
+        if(s_card_drag&&(ev->type==UI_GESTURE_SWIPE_L||ev->type==UI_GESTURE_SWIPE_R)) {
+            s_card_to_x=ev->x; // 甩动事件带释放位置 / the swipe carries the release position
+            s_card_dir=ev->type==UI_GESTURE_SWIPE_L?1:-1;
+            return APP_REDRAW_NONE;
+        }
+    }
     if(ev->type==UI_GESTURE_MOVE) {if(s_press_pending&&!hit(s_pressed,ev->x,ev->y)){s_press_pending=false;s_area=control_feedback_area(s_pressed);return APP_REDRAW_AREA;}return APP_REDRAW_NONE;}
     s_press_pending=false;
     if(ev->type==UI_GESTURE_LONG_PRESS&&s_view==HOME_ROOT&&home_band_clock_hit(ev->x0,ev->y0)) {
         s_component_browse=app_settings_home_component();s_view=HOME_COMPONENT;s_save_error=false;return APP_REDRAW_PAGE;
     }
-    // 卡带跟着手指翻页：设计稿开机停在第一本，向左滑看到右边的下一本。
-    // The strip pages with the finger: the design rests on the first book and a left swipe reveals the next.
-    if(s_view==HOME_ROOT&&ev->y0>=HOME_CARD_Y&&ev->y0<HOME_CARD_Y+HOME_CARD_H) {
-        int direction=ev->type==UI_GESTURE_SWIPE_L?1:ev->type==UI_GESTURE_SWIPE_R?-1:0;
-        home_book_t *cards[HOME_CARDS];const unsigned count=home_cards(cards);
-        if(direction&&count) {
-            int page=s_card_page+direction;
-            if(page<0)page=0;
-            if(page>=(int)count)page=(int)count-1;
-            if(page!=s_card_page){s_card_page=page;s_card_menu=false;s_area=card_strip_area();return APP_REDRAW_AREA;}
-        }
-    }
+    if(s_card_drag&&ev->type==UI_GESTURE_CANCEL){s_card_drag=false;s_card_flick=0;return APP_REDRAW_NONE;}
     if(s_view==HOME_COMPONENT&&ev->y0>=250&&ev->y0<970){
         int direction=ev->type==UI_GESTURE_SWIPE_L?1:ev->type==UI_GESTURE_SWIPE_R?-1:0;
         if(ev->type==UI_GESTURE_TAP&&hit((EpdRect){36,472,64,64},ev->x0,ev->y0))direction=-1;
@@ -1074,12 +1238,31 @@ static app_redraw_t on_gesture(app_ctx_t *ctx,const ui_gesture_event_t *ev) {
         if(old!=s_goal_draft){s_area=(EpdRect){36,198,612,830};return APP_REDRAW_AREA;}
     }else {
         int tab=ui_nav_hit(x,y);if(tab>=0){ui_nav_request(ctx,tab);return APP_REDRAW_NONE;}
-        // 菜单开着时先吃掉这一下：点菜单外或再点“…”都只关菜单。
-        // While the menu is open it consumes the tap: a tap outside or on "..." only closes it.
+        // “…”三个动作：标记已读完 / 在文件管理中显示 / 从继续阅读移除。
+        // The "..." rows: mark finished, reveal in Files, remove from continue reading.
         if(s_card_menu) {
+            const EpdRect menu=card_menu_rect(s_card_page,s_card_page);
             const int row=y-(HOME_MENU_TOP+HOME_MENU_PAD_V);
-            if(row>=0&&row<3*HOME_MENU_ROW_H){s_card_menu=false;return APP_REDRAW_PAGE;}
-            s_card_menu=false;return APP_REDRAW_PAGE;
+            home_book_t *book=focused_card();
+            // 菜单第一行正好压在“…”下方，再点把手只能收起菜单，不能当成首行动作。
+            // Row one sits right under "...", so a second tap on the handle may only close the menu
+            // and must never count as the first action.
+            const bool on_dots=hit(dots_hit_rect(s_card_page,s_card_page),x,y);
+            s_card_menu=false;
+            if(!on_dots&&book&&row>=0&&row<3*HOME_MENU_ROW_H&&hit(menu,x,y)) {
+                const int action=row/HOME_MENU_ROW_H;
+                if(action==0) {
+                    // 标记成功后只改内存里的这份缓存，页面立刻少一本书；下一次进首页会重扫。
+                    // After a successful mark only this in-memory cache changes, so the book leaves
+                    // the strip at once; the next Home entry rescans anyway.
+                    if(app_book_set_finished(book->path,true))book->finished=true;
+                }else if(action==1) {
+                    app_files_request_reveal(book->path);
+                    ctx->request_app=app_files_page();
+                    return APP_REDRAW_NONE;
+                }else if(app_book_set_resume_hidden(book->path,true))book->resume_hidden=true;
+            }
+            return APP_REDRAW_PAGE;
         }
         if(hit(dots_hit_rect(s_card_page,s_card_page),x,y)){s_card_menu=true;return APP_REDRAW_PAGE;}
         int card=card_at(x,y);

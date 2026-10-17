@@ -32,13 +32,14 @@ static void fit(char *text, int width) {
 static void render(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     ui_clear_page(fb);
+    // 恢复页也用灰底白卡片，不再描边。/ The recovery page uses the gray ground and white cards without outlines.
+    ui_fill_rect_fast((EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT}, 0xe0, fb);
     ui_nav_status(fb);
     ui_nav_back(fb, 58, 117);
     ui_text_vc(fb, 342, 117, 36, "启动恢复", EPD_DRAW_ALIGN_CENTER, false);
     ui_fill_rect_fast((EpdRect){36, 195, 612, 2}, 0x58, fb);
     EpdRect card = {36, 244, 612, 320};
-    ui_fill_round_rect(fb, card, 24, 0xf0);
-    ui_draw_round_rect(fb, card, 24, 0x38);
+    ui_fill_round_rect(fb, card, 24, UI_GRAY_WHITE);
     ui_text(fb, 58, 270, 30, s_removed ? "书籍已删除" : s_confirm ? "确认删除这本书？" : "上次打开此书时中断", EPD_DRAW_ALIGN_LEFT, false);
     const char *name = strrchr(s_path, '/');
     char label[288]; snprintf(label, sizeof(label), "%s", name ? name + 1 : s_path);
@@ -48,7 +49,7 @@ static void render(app_ctx_t *ctx, uint8_t *fb) {
     ui_text(fb, 58, 482, 24, s_confirm ? "其他书籍和设置会保留。" : "已停止自动重试，可先返回首页。", EPD_DRAW_ALIGN_LEFT, false);
     if (s_message[0]) ui_text(fb, 58, 609, 24, s_message, EPD_DRAW_ALIGN_LEFT, false);
     EpdRect back = {36, 710, 612, 82}, remove = {36, 820, 612, 82};
-    ui_fill_round_rect(fb, back, 20, 0xf0); ui_draw_round_rect(fb, back, 20, 0x38);
+    ui_fill_round_rect(fb, back, 20, UI_GRAY_WHITE);
     ui_text_vc(fb, 342, 751, 28, s_confirm ? "取消删除" : "返回首页", EPD_DRAW_ALIGN_CENTER, false);
     if (!s_removed) {
         ui_fill_round_rect(fb, remove, 20, UI_GRAY_BLACK);
