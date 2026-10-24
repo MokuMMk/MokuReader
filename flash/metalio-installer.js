@@ -1,7 +1,7 @@
 /* 中文：S31 专用网页安装，先验证再写入；与 Pico 安装器隔离。 / English: Verify-before-write S31 installation isolated from the Pico installer. */
 import {require,equal,identity,partitionTable,selectedSlot} from './metalio-flash-core.js';
-import {connectS31,connectionMessage} from './metalio-connection.js';
-import {readS31Flash} from './metalio-flash-reader.js';
+import {connectS31,prepareS31Flash,connectionMessage} from './metalio-connection.js?v=s31-native-20261024';
+import {readS31Flash} from './metalio-flash-reader.js?v=s31-native-20261024';
 let active=false;
 async function open(snapshot){
   if(active)return;active=true;
@@ -58,7 +58,10 @@ async function open(snapshot){
       const security=await loader.getSecurityInfo();
       require(security.chipId===32&&!security.parsedFlags.SECURE_BOOT_EN&&!security.parsedFlags.SECURE_DOWNLOAD_ENABLE&&((security.flashCryptCnt.toString(2).match(/1/g)||[]).length%2===0),'此设备已启用安全启动或 Flash 加密，不能使用此安装包。');
       const capacity=await loader.detectFlashSize();require(loader.flashSizeBytes(capacity)>=0x1000000,'Flash 容量不足 16 MB。');
+      await prepareS31Flash(loader,loader.flashSizeBytes(capacity));
+      append('Flash 初始化：已按本地 esptool 设置 16 MB / 64 KiB 块 / 4 KiB 扇区 / 256 字节页；尚未写入。');
       const mac=await loader.chip.readMac(loader);append(`S31 MAC: ${mac} / ${capacity}`);
+      append('读取方式：512 字节逐包确认，单包在途；每次完整读取核验 MD5。');
       const table=bundle.parts.find(p=>p.name==='partitions.bin');partitionTable(table.data);
       say('正在核对分区与启动位置…');
       protectedBefore=await read(0x8000,0x8000,'读取分区与启动记录');

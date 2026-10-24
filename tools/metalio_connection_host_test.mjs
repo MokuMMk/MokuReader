@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {ESPLoader} from '../flash/vendor/metalio/esptool-js-0.7.0.js';
-import {connectS31,connectionMessage} from '../flash/metalio-connection.js';
+import {connectS31,prepareS31Flash,connectionMessage} from '../flash/metalio-connection.js';
 
 const expected=['RTS:false','DTR:false','DTR:true','RTS:false','RTS:true','DTR:false','RTS:true','RTS:false','DTR:false'];
 function fixture(){
@@ -33,6 +33,12 @@ await assert.rejects(connectS31(blocked,10),/握手超时.*尚未写入/);contin
 assert.match(connectionMessage({name:'NetworkError'}),/关闭其他刷机页/);
 assert.match(connectionMessage({name:'Error',message:'Failed to connect with the device'}),/官方固件/);
 const installer=fs.readFileSync(new URL('../flash/metalio-installer.js',import.meta.url),'utf8');
+const commands=[];const flashLoader={chip:{IMAGE_CHIP_ID:32},IS_STUB:true,checkCommand:async(label,op,bytes)=>{commands.push({label,op,words:Array.from({length:6},(_,i)=>new DataView(bytes.buffer).getUint32(i*4,true))});return 0;}};
+await prepareS31Flash(flashLoader,0x1000000);assert.deepEqual(commands,[{label:'set SPI params',op:0x0b,words:[0,0x1000000,0x10000,0x1000,0x100,0xffff]}]);
+await assert.rejects(prepareS31Flash(flashLoader,0x800000),/16 MB/);assert.equal(commands.length,1);
+await assert.rejects(prepareS31Flash({...flashLoader,IS_STUB:false},0x1000000),/官方下载/);
+await assert.rejects(prepareS31Flash({...flashLoader,checkCommand:async()=>1},0x1000000),/初始化失败/);
+assert(installer.indexOf('await prepareS31Flash(')<installer.indexOf('protectedBefore=await read('),'native flash geometry must be configured before the first read');
 assert.match(installer,/await connectS31\(loader\)/);assert(!installer.includes("loader.main('no_reset')"));
 assert.match(installer,/首次安装必须从 Metalio 官方固件刷入/);
 assert.match(fs.readFileSync(new URL('../flash/versions.js',import.meta.url),'utf8'),/首次安装必须从 Metalio 官方固件刷入/);

@@ -4,6 +4,16 @@
  */
 import {require} from './metalio-flash-core.js';
 
+export async function prepareS31Flash(loader,size){
+  require(loader.chip?.IMAGE_CHIP_ID===32&&loader.IS_STUB,'需要 S31 官方下载程序。');
+  require(size===0x1000000,'需要已确认的 16 MB S31 Flash。');
+  // 与本地 esptool flash_set_parameters 相同：只配置 RAM 中的 flashchip 几何，不擦写 Flash。
+  // Match native esptool flash_set_parameters: configure RAM flashchip geometry, never erase/program Flash.
+  const request=new Uint8Array(24),view=new DataView(request.buffer);
+  [0,size,0x10000,0x1000,0x100,0xffff].forEach((value,index)=>view.setUint32(index*4,value,true));
+  require(await loader.checkCommand('set SPI params',0x0b,request,undefined,undefined,5000)===0,'S31 Flash 参数初始化失败，尚未写入。');
+}
+
 export async function prepareS31Download(loader){
   require(loader.chip?.CHIP_NAME==='ESP32-S31'&&loader.chip.IMAGE_CHIP_ID===32,'不是 S31 下载口，尚未写入。');
   if(loader.secureDownloadMode||loader.syncStubDetected)return;
