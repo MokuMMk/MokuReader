@@ -3,8 +3,9 @@
  * English: Regress S31 read-frame flow control, final-digest validation, consecutive commands, truncation and timeouts.
  */
 import assert from 'node:assert/strict';import {createHash,randomBytes} from 'node:crypto';import fs from 'node:fs';
-import {readS31Flash} from '../flash/metalio-flash-reader.js';
+import {readS31Flash,verifyS31Flash,flashDataMD5} from '../flash/metalio-flash-reader.js';
 import {ESPLoader,Transport} from '../flash/vendor/metalio/esptool-js-0.7.0.js';
+import {S31Transport} from '../flash/metalio-transport.js';
 function fixture(data,options={}){
   let packets=[],received=0,commands=0,digests=0;
   const loader={chip:{IMAGE_CHIP_ID:32},IS_STUB:true,ESP_READ_FLASH:0xd2,
@@ -39,10 +40,10 @@ await assert.rejects(readS31Flash(late,0x8000,512,()=>{},10),/0\/512.*等待数�
 deliverLate(new Uint8Array(512));await new Promise(resolve=>setTimeout(resolve,0));assert.equal(lateAcks,0,'a timed-out read must never ACK late bytes');
 // 真实 SDK 解帧，覆盖浏览器碎包、转义字节跨块、响应与数据粘包及逐包确认。
 // Exercise real SDK decoding: split WebSerial chunks/escapes, coalesced response/data and stop-and-wait ACKs.
-async function serialStreamRegression(){
+async function serialStreamRegression(Serial){
  const source=Uint8Array.from({length:1553},(_,i)=>i&255),md5=new Uint8Array(createHash('md5').update(source).digest());
  let input,offset=0,acks=0;const device={getInfo:()=>({usbVendorId:0x303a,usbProductId:0x1001})};
- const transport=new Transport(device);transport.trace=()=>{};
+ const transport=new Serial(device);transport.trace=()=>{};
  function send(...frames){
   const wire=Uint8Array.from(frames.flatMap(frame=>Array.from(transport.slipWriter(frame))));
   const cuts=[1,2,61,64,3,17];let at=0,part=0;
@@ -66,7 +67,12 @@ async function serialStreamRegression(){
  assert.deepEqual(await readS31Flash(loader,0x8000,source.length),source);assert.equal(acks,4);assert.equal(transport.inWaiting(),0);
  input.close();await loop;
 }
-await serialStreamRegression();
+await serialStreamRegression(Transport);await serialStreamRegression(S31Transport);
+let reads=0;const checksumLoader={chip:{IMAGE_CHIP_ID:32},IS_STUB:true,flashMd5sum:async(address,size)=>{assert.equal(address,0x10000);assert.equal(size,data.length);return createHash('md5').update(data).digest('hex');},transport:{read:async()=>{reads++;throw Error('No full readback allowed');}}};
+assert.equal(await verifyS31Flash(checksumLoader,0x10000,new Uint8Array(data)),createHash('md5').update(data).digest('hex'));assert.equal(reads,0);
+assert.equal(flashDataMD5(new Uint8Array(data)),createHash('md5').update(data).digest('hex'));
+await assert.rejects(verifyS31Flash({...checksumLoader,flashMd5sum:async()=> '0'.repeat(32)},0x10000,new Uint8Array(data)),/MD5 校验失败/);
+await assert.rejects(verifyS31Flash({...checksumLoader,flashMd5sum:async()=>''},0x10000,new Uint8Array(data)),/MD5 校验失败/);
 const big=fixture(Buffer.alloc(5*1024*1024,0xa5));assert.equal((await readS31Flash(big.loader,0x10000,5*1024*1024)).length,5*1024*1024);assert.equal(big.digests,1);
 await assert.rejects(readS31Flash(f.loader,0xffffff,2),/范围/);
 const installer=fs.readFileSync(new URL('../flash/metalio-installer.js',import.meta.url),'utf8');

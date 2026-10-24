@@ -6,6 +6,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {ESPLoader} from '../flash/vendor/metalio/esptool-js-0.7.0.js';
 import {connectS31,prepareS31Flash,connectionMessage} from '../flash/metalio-connection.js';
+import {loadS31Stub} from '../flash/metalio-native-stub.js';
+const stubBytes=fs.readFileSync(new URL('../flash/vendor/metalio/esp32s31-esptool-5.5.0.json',import.meta.url));
+const native=await loadS31Stub(async()=>new Response(stubBytes));
+assert.equal(native.decodedText.length,7512);
+await assert.rejects(loadS31Stub(async()=>new Response(new Uint8Array([1,2,3]))),/校验失败/);
 
 const expected=['RTS:false','DTR:false','DTR:true','RTS:false','RTS:true','DTR:false','RTS:true','RTS:false','DTR:false'];
 function fixture(){
@@ -20,16 +25,17 @@ function fixture(){
   loader.sync=async()=>{assert.deepEqual(signals,expected,'ROM must receive the USB download-reset sequence before SYNC');return [1,new Uint8Array()];};
   loader.detectChip=async mode=>{await loader.openAndSync(mode,1);loader.chip={CHIP_NAME:'ESP32-S31',IMAGE_CHIP_ID:32,
     getChipDescription:async()=>'ESP32-S31',getChipFeatures:async()=>[],getCrystalFreq:async()=>40,readMac:async()=>'00:00:00:00:00:00'};};
-  loader.runStub=async()=>{loader.IS_STUB=true;};loader.readFlashId=async()=>0x184020;
+  loader.memBegin=async()=>{};loader.memBlock=async()=>{};loader.memFinish=async()=>{};
+  transport.read=async()=>new Uint8Array([79,72,65,73]);loader.readFlashId=async()=>0x184020;
   return {loader,signals,registers};
 }
 const old=fixture();await assert.rejects(old.loader.main('no_reset'),/Failed to connect/);assert.deepEqual(old.signals,[]);
-const current=fixture();await connectS31(current.loader);assert.deepEqual(current.signals,expected);assert(current.loader.IS_STUB);
+const current=fixture();await connectS31(current.loader,30000,native);assert.deepEqual(current.signals,expected);assert(current.loader.IS_STUB);
 assert.deepEqual(current.registers,[[0x20801018,0x50d83aa1],[0x20801000,0],[0x20801018,0],[0x20801020,0x50d83aa1],[0x2080101c,0x41234],[0x20801020,0]]);
-await assert.rejects(connectS31({main:async()=>{},chip:{CHIP_NAME:'ESP32-S3',IMAGE_CHIP_ID:9},IS_STUB:true}),/S31/);
-await assert.rejects(connectS31({main:async()=>{},chip:{CHIP_NAME:'ESP32-S31',IMAGE_CHIP_ID:32},IS_STUB:false}),/S31/);
+await assert.rejects(connectS31({main:async()=>{},chip:{CHIP_NAME:'ESP32-S3',IMAGE_CHIP_ID:9},IS_STUB:true},30000,native),/S31/);
+await assert.rejects(connectS31({main:async()=>{},chip:{CHIP_NAME:'ESP32-S31',IMAGE_CHIP_ID:32},IS_STUB:false},30000,native),/S31/);
 let continueHandshake;const blocked={main:()=>new Promise(resolve=>continueHandshake=resolve)};
-await assert.rejects(connectS31(blocked,10),/握手超时.*尚未写入/);continueHandshake();
+await assert.rejects(connectS31(blocked,10,native),/握手超时.*尚未写入/);continueHandshake();
 assert.match(connectionMessage({name:'NetworkError'}),/关闭其他刷机页/);
 assert.match(connectionMessage({name:'Error',message:'Failed to connect with the device'}),/官方固件/);
 const installer=fs.readFileSync(new URL('../flash/metalio-installer.js',import.meta.url),'utf8');

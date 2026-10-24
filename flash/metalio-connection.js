@@ -3,6 +3,7 @@
  * English: Use Espressif USB JTAG download reset and bound the read-only handshake; never write Flash.
  */
 import {require} from './metalio-flash-core.js';
+import {loadS31Stub,runS31Stub} from './metalio-native-stub.js?v=s31-direct-20261024';
 
 export async function prepareS31Flash(loader,size){
   require(loader.chip?.IMAGE_CHIP_ID===32&&loader.IS_STUB,'需要 S31 官方下载程序。');
@@ -29,9 +30,10 @@ export async function prepareS31Download(loader){
   await loader.writeReg(0x20801020,0);
 }
 
-export async function connectS31(loader, timeoutMs=30000){
+export async function connectS31(loader, timeoutMs=30000, nativeStub=null){
+  const stub=nativeStub||await loadS31Stub();
   let timer;const runStub=loader.runStub;
-  loader.runStub=async function(){await prepareS31Download(this);return runStub.call(this);};
+  loader.runStub=async function(){await prepareS31Download(this);return runS31Stub(this,stub);};
   try{
     await Promise.race([
       loader.main('usb_reset'),

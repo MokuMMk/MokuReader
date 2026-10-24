@@ -8,6 +8,16 @@ const failed=new WeakSet();
 const word=value=>{const data=new Uint8Array(4);new DataView(data.buffer).setUint32(0,value,true);return data;};
 const hex=data=>Array.from(data,b=>b.toString(16).padStart(2,'0')).join('');
 
+export function flashDataMD5(data){return SparkMD5.ArrayBuffer.hash(data.buffer.slice(data.byteOffset,data.byteOffset+data.byteLength));}
+export async function verifyS31Flash(loader,address,data){
+  require(loader.chip?.IMAGE_CHIP_ID===32&&loader.IS_STUB,'需要已识别的 S31 下载程序。');
+  require(!failed.has(loader),'读取会话已中断，请重新连接。');
+  require(data instanceof Uint8Array&&data.length>0&&Number.isSafeInteger(address)&&address>=0&&address+data.length<=0x1000000,'Flash 校验范围无效。');
+  const actual=await loader.flashMd5sum(address,data.length);
+  require(typeof actual==='string'&&/^[0-9a-f]{32}$/i.test(actual)&&actual.toLowerCase()===flashDataMD5(data),'设备端 MD5 校验失败，不能确认写入成功。');
+  return actual.toLowerCase();
+}
+
 export async function readS31Flash(loader,address,size,onProgress=()=>{},timeoutMs=Math.max(15000,Math.ceil(size/65536)*1000)){
   require(loader.chip?.IMAGE_CHIP_ID===32&&loader.IS_STUB,'需要已识别的 S31 下载程序。');
   require(!failed.has(loader),'读取会话已中断，请关闭页面并重新连接。');
