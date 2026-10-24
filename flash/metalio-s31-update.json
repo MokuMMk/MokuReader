@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc101",
+  "version": "0.3.3-rc102",
   "project": "Kiikoread_Metalio_S31",
   "board": "Metalio-EINK4-Plus-S31",
   "layout": "metalio-s31-dual-5m-v1",
   "minimum_base_version": "0.3.3-rc98",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc101.bin",
-  "size": 4499408,
-  "sha256": "f2739aec5d0a133645feff70b77f1669eb97dfa56625a1cc325328ede4896d7a",
-  "notes": "1. 下拉及 AI 菜单收回后一次整页清残影\n2. 图文翻页保持未变像素并合并进度\n3. 音量键独立翻页、按键自定义排列修复\n仅 Metalio S31，保留设置与 TF 文件。"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc102.bin",
+  "size": 4510880,
+  "sha256": "beb62067ce9a9e822c00cc96b4eaabe295ef18f8a0b124e02366dfbea8dd6808",
+  "notes": "1. 修复待机后的字体恢复与临时加载失败重试\n2. 字体列表128款，优化长名称和符号兼容\n3. 四灰阅读设置面板透字修复\n仅 Metalio S31，保留设置与 TF 文件。"
 }
