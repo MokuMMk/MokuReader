@@ -2,7 +2,6 @@
 import {require,equal,identity,partitionTable,selectedSlot} from './metalio-flash-core.js';
 import {connectS31,prepareS31Flash,connectionMessage} from './metalio-connection.js?v=s31-direct-20261024';
 import {readS31Flash,verifyS31Flash} from './metalio-flash-reader.js?v=s31-direct-20261024';
-import {S31Transport} from './metalio-transport.js?v=s31-direct-20261024';
 let active=false;
 async function open(snapshot){
   if(active)return;active=true;
@@ -49,6 +48,7 @@ async function open(snapshot){
       await disconnect();say('正在下载并校验所选固件…');
       bundle?.dispose();bundle=await window.KiikoreadFlasher.prepare(snapshot.manifest,snapshot.manifestURL,snapshot.files,'metalio');
       const {ESPLoader}=await import('./vendor/metalio/esptool-js-0.7.0.js');
+      const {S31Transport}=await import('./metalio-transport.js?v=s31-direct-20261024');
       transport=new S31Transport(port);loader=new ESPLoader({transport,baudrate:115200,romBaudrate:115200,serialOptions:{bufferSize:65536},terminal:{clean(){},write:append,writeLine:append}});
       say('正在复位 USB JTAG 下载口并识别 S31（最长 30 秒）…');
       append('连接方式：Espressif USB JTAG 下载复位（usb_reset）；尚未写入 Flash。');
