@@ -34,6 +34,15 @@ void app_settings_set_staged_shutdown(bool staged);
 /// Power-key unlock/deep-wake presses: defaults to 1; enable double-press unlock on Settings home for 2.
 uint8_t app_settings_wake_presses(void);
 void app_settings_set_wake_presses(uint8_t presses);
+/// 密码解锁宽限期档位（0 关 / 1=5 分钟 / 2=1 小时 / 3=8 小时 / 4=24 小时）。
+/// PIN unlock grace step (0 off / 1=5min / 2=1h / 3=8h / 4=24h).
+uint8_t app_settings_pin_grace_code(void);
+void app_settings_set_pin_grace_code(uint8_t code);
+/// 档位换分钟；0 关。/ Step to minutes; 0 is off.
+unsigned app_settings_pin_grace_minutes(void);
+/// 最近一次带密码锁屏的 unix 秒（0 未知）。/ Last PIN-enabled lock, unix seconds (0 unknown).
+uint32_t app_settings_pin_locked_at(void);
+void app_settings_record_pin_lock(uint32_t unix_seconds);
 /// 首页进入时强制全刷；默认关闭。/ Full refresh when entering Home; off by default.
 bool app_settings_home_full_refresh(void);
 void app_settings_set_home_full_refresh(bool enabled);
