@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc102",
+  "version": "0.3.3-rc103",
   "project": "Kiikoread_Metalio_S31",
   "board": "Metalio-EINK4-Plus-S31",
   "layout": "metalio-s31-dual-5m-v1",
   "minimum_base_version": "0.3.3-rc98",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc102.bin",
-  "size": 4510880,
-  "sha256": "beb62067ce9a9e822c00cc96b4eaabe295ef18f8a0b124e02366dfbea8dd6808",
-  "notes": "1. 修复待机后的字体恢复与临时加载失败重试\n2. 字体列表128款，优化长名称和符号兼容\n3. 四灰阅读设置面板透字修复\n仅 Metalio S31，保留设置与 TF 文件。"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc103.bin",
+  "size": 4511648,
+  "sha256": "88d07336787fefa31a168f98ca89d9a78c8f7652673ba55d558568d002c0bcac",
+  "notes": "1. 关机睡眠统一为浅睡10分钟后深睡或彻底断电\n2. 移除独立锁屏省电方式，普通锁屏自动进入低功耗\n3. 修复浅睡失败重试及字体/外设恢复\n仅 Metalio S31；保留设置与 TF 文件。"
 }
