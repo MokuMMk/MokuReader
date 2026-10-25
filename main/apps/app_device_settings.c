@@ -770,11 +770,18 @@ static void settings_fit_text(char *value, int px, int width) {
 static void fit_value(char *value, int width) { settings_fit_text(value,20,width); }
 
 static void settings_switch(uint8_t *fb, int center_y, bool active) {
+    // 灰色轨道在滚动差分扫描下会经过深色相位产生黑闪；纯黑白无灰阶过渡，任何刷新模式都稳定。
+    // A gray track transits dark phases under the scroll's differential scan and flashes
+    // black; pure black/white holds clean in every refresh mode.
     EpdRect track = {555, center_y - 19, 69, 39};
-    ui_fill_round_rect(fb, track, 19, active ? 0x58 : 0xc4);
+    if (active) ui_fill_round_rect(fb, track, 19, UI_GRAY_BLACK);
+    else {
+        ui_fill_round_rect(fb, track, 19, UI_GRAY_WHITE);
+        ui_draw_round_rect(fb, track, 19, 0x30);
+    }
     int cx = active ? track.x + 49 : track.x + 20;
     epd_fill_circle(cx, track.y + 19, 16, UI_GRAY_WHITE, fb);
-    epd_draw_circle(cx, track.y + 19, 16, 0x78, fb);
+    epd_draw_circle(cx, track.y + 19, 16, 0x30, fb);
 }
 
 static void setting_group(uint8_t *fb, int title_y, const char *title,
