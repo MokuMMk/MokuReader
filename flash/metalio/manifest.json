@@ -19,7 +19,7 @@
           "path": "bootloader.bin",
           "offset": 8192,
           "size": 22448,
-          "sha256": "3244f7541c84f081c3039c3415254d8a5fc31cd57b0db260bcb203986e277bc2"
+          "sha256": "b10dcd1d67c5f7724d9848059b2847a1810402a84f476126684fed95b453016c"
         },
         {
           "path": "partitions.bin",
@@ -30,8 +30,8 @@
         {
           "path": "firmware.bin",
           "offset": 65536,
-          "size": 4727040,
-          "sha256": "6afd7c4989edcee09ccda928da69465eab4617b6eb639f58f662adfccc823506"
+          "size": 4726976,
+          "sha256": "d62c5bbbba99d00398f42e0bb487dfc758a346819dd31a53cec1c96df9748379"
         },
         {
           "path": "ota_data_initial.bin",
@@ -43,7 +43,7 @@
     }
   ],
   "previous_version": "0.3.3-rc103",
-  "updated_at": "2026-10-25T17:36:02+08:00",
+  "updated_at": "2026-10-25T17:45:47+08:00",
   "pico_ota": {
     "layout": "metalio-s31-dual-5m-v1",
     "base_version": "0.3.3-rc104",

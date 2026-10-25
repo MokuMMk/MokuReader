@@ -6,7 +6,7 @@
   "layout": "metalio-s31-dual-5m-v1",
   "minimum_base_version": "0.3.3-rc98",
   "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc104.bin",
-  "size": 4727040,
-  "sha256": "6afd7c4989edcee09ccda928da69465eab4617b6eb639f58f662adfccc823506",
+  "size": 4726976,
+  "sha256": "d62c5bbbba99d00398f42e0bb487dfc758a346819dd31a53cec1c96df9748379",
   "notes": "1. 图片及壁纸预览保留灰阶，统一设定界面\n2. 支持UTF-16 TXT、JPEG软硬解回退\n3. TF兼容重试、手动恢复及解锁响应优化\n4. 改善擦白、书架响应与按键震动\n仅Metalio S31，默认保留数据。"
 }
