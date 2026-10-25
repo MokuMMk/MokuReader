@@ -1,5 +1,10 @@
 # 版本变更 / Changelog
 
+## 未发布 · Pico
+
+- 系统与阅读字体列表由24款扩展到128款，只增加名称与路径索引，按需加载字库；保留两处选择器的分页和大字号布局。
+  Expand system and reading font catalogues from24 to128 entries using metadata only, retaining on-demand font loading, paging and large-text layouts.
+
 ## Metalio S31 0.3.3-rc102 · 2026-10-24
 
 - 正常待机解锁后继续恢复 TF 卡、字体和书籍句柄；临时读卡或内存失败按间隔重试，手动重新加载成功会解除旧失败记录。保留异常启动时使用内建字库的保护，不覆盖用户保存的字体选择。
