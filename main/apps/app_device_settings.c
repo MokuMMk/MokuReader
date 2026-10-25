@@ -1445,7 +1445,16 @@ static void render_content(app_ctx_t *ctx, uint8_t *fb) {
     ui_fill_rect_fast((EpdRect){0,0,UI_LOCK_WIDTH,160},UI_GRAY_WHITE,fb);
     ui_nav_status(fb);
     ui_text(fb, 36, 91, 52, "设置", EPD_DRAW_ALIGN_LEFT, false);
-    if (s_notice[0]) ui_text_fixed_vc(fb, 36, 138, 20, s_notice, EPD_DRAW_ALIGN_LEFT, false);
+    if (s_notice[0]) {
+        // 提示移到「设置」标题右侧同一行、中心对齐标题墨迹跨度中点（基线与上下沿实测，任何字体同轨）：
+        // 自导入的大字面字体不再与标题或下方列表互相压住——原 y=138 的固定间距按内置字体预留。
+        // The notice shares the title's row, centred on the title's measured ink span: tall
+        // imported faces no longer collide with the title or the list below — the fixed y=138 gap
+        // was reserved for the built-in face.
+        const int notice_x = 36 + 2 * ui_text_effective_px(52) + 24;
+        ui_text_fixed_vc(fb, notice_x, ui_text_ink_center_y(91, 52, "设置"),
+                         20, s_notice, EPD_DRAW_ALIGN_LEFT, false);
+    }
     settings_navigation(fb);
 }
 
