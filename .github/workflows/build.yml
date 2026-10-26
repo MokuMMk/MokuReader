@@ -14,6 +14,7 @@ jobs:
       - name: Water-turn, display recovery, navigation and waveform regressions
         shell: bash
         run: |
+          python3 tools/license_notices_host_test.py
           bash tools/run_water_turn_host_test.sh
           bash tools/run_display_host_test.sh
           bash tools/run_display_navigation_tests.sh
