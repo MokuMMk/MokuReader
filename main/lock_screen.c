@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: Apache-2.0
- * 中文：独立锁屏输入循环；禁止触摸键、蓝牙、拿起或冷启动绕过密码。
- * English: Isolated locked-input loop; touch keys, BLE, pickup and cold starts cannot bypass authentication.
+ * 中文：独立锁屏输入循环；触摸键、蓝牙、拿起或冷启动不得绕过密码；已选宽限期仅在锁屏按键唤醒后判定。
+ * English: Isolated locked-input loop; touch keys, BLE, pickup and cold starts cannot bypass the PIN; opt-in grace is checked only after lock-key wake.
  * 用户修订：读取失败或确认未开启时直接返回；正常读取的已有密码必须摘要验证，模糊缓存与局部输入保持。
  * User revision: return for read failure or confirmed disabled state; require digest verification for readable enabled PINs, retaining cached frost and local input.
  */
@@ -95,6 +95,9 @@ static void present_input(EpdiyHighlevelState *hl,EpdRect area){
 
 void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7a20h_handle_t acc,bool boot){
     if(!lock_pin_enabled())return;
+    // 冷启动不免密；只有锁屏唤醒或有效深睡检查点允许使用已选宽限期。
+    // Cold starts require the PIN; only lock wakes and valid deep resumes allow grace.
+    const bool allow_grace = !boot || pico_boot_has_resume();
     uint8_t *fb=epd_hl_get_framebuffer(hl);
     (void)acc;
     (void)ble_pt_stop(2000);
@@ -117,6 +120,14 @@ void lock_screen_authenticate(EpdiyHighlevelState *hl,cst836u_handle_t touch,sc7
                 original=NULL;ui_pinpad_begin(&pad,fb,"输入密码");
                 continue;
             }
+        }
+        // 等待可能跨过宽限截止点；浅睡与深睡都在有效电源键唤醒后重新检查。
+        // Waiting may cross the deadline; recheck after the validated power wake in both paths.
+        if(allow_grace && lock_pin_grace_active()) {
+            ui_pinpad_end(&pad);free(original);read_pico_pmu_drain_events();
+            ble_pt_event_t e;while(ble_pt_pop_key(&e)){}
+            ble_pt_raw_t raw;while(ble_pt_pop_raw(&raw)){}
+            return;
         }
         app_lock_wait_key_idle(800);
         ui_pinpad_reset(&pad,"输入密码","");

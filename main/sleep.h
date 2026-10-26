@@ -45,6 +45,9 @@ void app_lock_feedback(EpdiyHighlevelState *hl);
 
 /// 在消费恢复/开书前进行冷启动与深睡密码验证。/ Gate cold/deep starts before consuming resume or opening books.
 void app_lock_boot_gate(EpdiyHighlevelState *hl, cst836u_handle_t touch, sc7a20h_handle_t acc);
+/// 有效时钟下检查当前时刻是否仍在密码宽限期，必须在唤醒后调用。
+/// Check the PIN grace window against a valid current clock, after wake.
+bool lock_pin_grace_active(void);
 
 /// 等电源键松开，避免进睡瞬间被同一下按住立刻唤醒。
 /// Wait for the power key to release so the same press does not wake immediately.
