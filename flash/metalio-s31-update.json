@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc104",
+  "version": "0.3.3-rc105",
   "project": "Kiikoread_Metalio_S31",
   "board": "Metalio-EINK4-Plus-S31",
   "layout": "metalio-s31-dual-5m-v1",
   "minimum_base_version": "0.3.3-rc98",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc104.bin",
-  "size": 4726976,
-  "sha256": "d62c5bbbba99d00398f42e0bb487dfc758a346819dd31a53cec1c96df9748379",
-  "notes": "1. 图片及壁纸预览保留灰阶，统一设定界面\n2. 支持UTF-16 TXT、JPEG软硬解回退\n3. TF兼容重试、手动恢复及解锁响应优化\n4. 改善擦白、书架响应与按键震动\n仅Metalio S31，默认保留数据。"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Metalio-S31-update-0.3.3-rc105.bin",
+  "size": 4732400,
+  "sha256": "3570fe10f5962007438b88c83bcc4685db5e7324c2836e54418a6cbe4b9db00d",
+  "notes": "1. 锁屏误唤醒防护与浅睡恢复修复\n2. 浅睡10分钟后同步RTC并关机\n3. 设置开关、白底密码与可选宽限期\n仅Metalio S31，保留数据。长待机仍待验证。"
 }
