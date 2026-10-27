@@ -1,12 +1,12 @@
 {
   "schema": 1,
-  "version": "0.3.3-rc100",
+  "version": "0.3.3-rc101",
   "project": "Read_Pico",
   "board": "RDP-G01-W",
   "layout": "pico-dual-4m-v1",
   "minimum_base_version": "0.3.3-rc72",
-  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc100.bin",
-  "size": 3382896,
-  "sha256": "31e0ed2374a1390b7842600f30e3a42ac709fff63d175c4e835712f8629fd4a5",
-  "notes": "1. 漫画 EPUB 使用有界图片头探测，加快大文件开书\n2. 固定时钟预览与透明书封缓存，改善切换与锁屏\n3. 完善锁屏恢复、字体回退及 TF 生命周期\n4. 官网双机型选择，GitHub 优先 OTA 与交叉签名验证"
+  "url": "https://wegooo-cell.github.io/read-pico-reader/Pico-update-0.3.3-rc101.bin",
+  "size": 3384384,
+  "sha256": "2e2eead475e1db235248cc59fda5c5be1ab1e3fce9bdaca171601549026851ac",
+  "notes": "1. 导入字体目录扩至128款\n2. 优化设置开关、标题与密码提示\n3. 新增可选密码宽限期，唤醒检查过期\n4. 修复部分EPUB误报资源过大\n保留Pico原波形与睡眠，rc100可回退。"
 }

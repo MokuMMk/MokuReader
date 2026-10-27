@@ -2,6 +2,32 @@
   "schema": 1,
   "releases": [
     {
+      "version": "0.3.3-rc100",
+      "manifest": "releases/0.3.3-rc100/manifest.json",
+      "bin": "Pico-update-0.3.3-rc100.bin",
+      "source_commit": "6ad301b9d1740d552a5f77701bbb5044e9664fef",
+      "files": {
+        "bootloader.bin": {
+          "size": 21232,
+          "sha256": "38dcc27263e5b4bf34875daefc538d06d7ff250667c18d8be2df46ab8e1dcf10"
+        },
+        "partitions.bin": {
+          "size": 3072,
+          "sha256": "edba9d92e5fc51c706c12f4b4a5d5d23728ba8fb0fbc00be654f1eccef404bda"
+        },
+        "firmware.bin": {
+          "size": 3382896,
+          "sha256": "31e0ed2374a1390b7842600f30e3a42ac709fff63d175c4e835712f8629fd4a5"
+        },
+        "ota_data_initial.bin": {
+          "size": 8192,
+          "sha256": "7d2c7ac4888bfd75cd5f56e8d61f69595121183afc81556c876732fd3782c62f"
+        }
+      },
+      "usb_package_url": "https://github.com/wegooo-cell/read-pico-reader/releases/download/v0.3.3-rc100/kiikoread-0.3.3-rc100-USB.zip",
+      "tf_package_url": "https://github.com/wegooo-cell/read-pico-reader/releases/download/v0.3.3-rc100/kiikoread-0.3.3-rc100-TF.zip"
+    },
+    {
       "version": "0.3.3-rc99",
       "manifest": "releases/0.3.3-rc99/manifest.json",
       "bin": "Pico-update-0.3.3-rc99.bin",
@@ -154,5 +180,5 @@
       }
     }
   ],
-  "previous_version": "0.3.3-rc99"
+  "previous_version": "0.3.3-rc100"
 }
