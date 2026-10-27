@@ -1,5 +1,19 @@
 # 版本变更 / Changelog
 
+## Pico 0.3.3-rc101 · 2026-10-27
+
+- 导入字体目录上限从24款扩大到128款，系统与阅读共用索引，字体仍按需加载。
+  Expand the shared system/reader font catalogue from24 to128 entries; font faces remain loaded on demand.
+- 设置开关改为黑白轨道，密码提示使用纯白底；设置标题与提示按实际字体对齐。
+  Use monochrome settings switches, a white PIN prompt and ink-aligned settings notices.
+- 新增可选密码免输宽限期，默认关闭；唤醒时重新检查是否过期，冷启动、无效时间及时间回拨仍需验证密码。
+  Add optional PIN grace, off by default, checking expiry on wake while retaining PIN checks on cold boot, invalid time and clock rollback.
+- 兼容部分EPUB在本地ZIP头中写入的空ZIP64占位，解决普通大小的书误报资源过大；保留真实ZIP64限制、资源上限和CRC校验。
+  Accept empty local ZIP64 placeholders in otherwise ordinary EPUB entries; retain real ZIP64 rejection, resource bounds and CRC verification.
+- 补齐第三方许可声明及自动检查；保留Pico独立蓝牙、睡眠、显示波形和分区。Metalio S31仍为rc106。
+  Include attribution checks and preserve Pico-specific Bluetooth, sleep, display waveforms and partitions; Metalio S31 remains on rc106.
+
+
 ## Metalio S31 0.3.3-rc106 · 2026-10-27
 
 - 改善锁屏后TF与字体恢复：优先恢复可读卡会话，释放旧句柄后再重开保存的字体；保留异常启动内建字体保护。
