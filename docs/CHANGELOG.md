@@ -21,6 +21,10 @@
 
 ## 未发布 · Pico
 
+- 兼容部分 EPUB 制作工具写入的本地头全零 ZIP64 预留字段，修复小书被误报为资源超限；中央目录、32位尺寸、解压边界和 CRC 校验保持不变，真正的 ZIP64 仍不支持。
+  Accept a narrowly validated zero-filled local ZIP64 placeholder without admitting real ZIP64 archives; central-directory, 32-bit size, inflate-bound and CRC checks stay strict.
+- 启动日志补充恢复保护的具体原因位，区分异常复位、未完成启动、未完成开书和 NVS 写入失败；不放宽保护，也不修改持久化记录格式。
+  Log the concrete recovery reason bits (abnormal reset, unfinished startup, unfinished book open, NVS write failure) without relaxing a protection or changing the persisted format.
 - 系统与阅读字体列表由24款扩展到128款，只增加名称与路径索引，按需加载字库；保留两处选择器的分页和大字号布局。
   Expand system and reading font catalogues from24 to128 entries using metadata only, retaining on-demand font loading, paging and large-text layouts.
 
