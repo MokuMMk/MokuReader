@@ -60,6 +60,14 @@ int main(int argc,char **argv){
  assert(!strcmp(ttf_font_item(0)->name,"Other")&&!strcmp(ttf_font_item(1)->name,"Same"));
  assert(strstr(ttf_font_item(1)->path,k_font_dirs[0]));
  clear(k_font_dirs[0]);clear(user_dir);
+ size_t n=TTF_FONT_PATH_MAX-strlen(user_dir)-2;assert(n>4&&n<254);
+ char fitting[256],too_long[256];
+ memset(fitting,'A',n);memcpy(fitting+n-4,".ttf",5);
+ memset(too_long,'B',n+1);memcpy(too_long+n-3,".ttf",5);
+ put(user_dir,fitting);put(user_dir,too_long);
+ assert(ttf_font_scan()==1&&strlen(ttf_font_item(0)->path)==TTF_FONT_PATH_MAX-1);
+ assert(strstr(ttf_font_item(0)->path,fitting));
+ clear(user_dir);
  for(int i=0;i<65;++i){char name[40];snprintf(name,sizeof(name),"asset-%03d.ttf",i);put(k_font_dirs[0],name);}
  for(int i=0;i<63;++i){char name[40];snprintf(name,sizeof(name),"user-%03d.ttf",i);put(user_dir,name);}
  assert(ttf_font_scan()==128&&!strcmp(ttf_font_item(127)->name,"user-062"));
