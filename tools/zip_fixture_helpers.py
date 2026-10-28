@@ -39,4 +39,3 @@ def with_local_extra(data, extra):
     struct.pack_into('<I', end, 16, new_directory)
     output.extend(end)
     return output
-

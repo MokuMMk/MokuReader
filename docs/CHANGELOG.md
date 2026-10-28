@@ -1,5 +1,41 @@
 # 版本变更 / Changelog
 
+## Pico 0.3.3-rc101 · 2026-10-27
+
+- 导入字体目录上限从24款扩大到128款，系统与阅读共用索引，字体仍按需加载。
+  Expand the shared system/reader font catalogue from24 to128 entries; font faces remain loaded on demand.
+- 设置开关改为黑白轨道，密码提示使用纯白底；设置标题与提示按实际字体对齐。
+  Use monochrome settings switches, a white PIN prompt and ink-aligned settings notices.
+- 新增可选密码免输宽限期，默认关闭；唤醒时重新检查是否过期，冷启动、无效时间及时间回拨仍需验证密码。
+  Add optional PIN grace, off by default, checking expiry on wake while retaining PIN checks on cold boot, invalid time and clock rollback.
+- 兼容部分EPUB在本地ZIP头中写入的空ZIP64占位，解决普通大小的书误报资源过大；保留真实ZIP64限制、资源上限和CRC校验。
+  Accept empty local ZIP64 placeholders in otherwise ordinary EPUB entries; retain real ZIP64 rejection, resource bounds and CRC verification.
+- 补齐第三方许可声明及自动检查；保留Pico独立蓝牙、睡眠、显示波形和分区。Metalio S31仍为rc106。
+  Include attribution checks and preserve Pico-specific Bluetooth, sleep, display waveforms and partitions; Metalio S31 remains on rc106.
+
+
+## Metalio S31 0.3.3-rc106 · 2026-10-27
+
+- 改善锁屏后TF与字体恢复：优先恢复可读卡会话，释放旧句柄后再重开保存的字体；保留异常启动内建字体保护。
+- 修复睡眠恢复时单次异常按键电平可能触发解锁，以及启动门禁前再次复位丢失锁定状态的问题；真实按键、双击与密码验证继续保留。
+- 浅睡十分钟后保持锁屏画面、同步外挂RTC并硬件关机，交接时不重新点亮前光或恢复整套媒体；滑动关机显示已关机提示，充电与拔线边界保留。
+- 壁纸锁屏改为合成完成后一次推屏；文件管理支持较长中文EPUB文件名。
+- 兼容EPUB本地头的全零ZIP64预留字段，修复小书被误报资源超限；真正ZIP64仍不支持，尺寸/范围/CRC校验保留。
+- 正式包使用常规引导程序，支持兼容底包直接OTA/TF升级；十分钟硬件关机后按长按电源键开机使用。未采用本地短按引导实验，未更改原厂波形和分区。
+- 本次仅发布S31；短时USB启动、挂卡和导入系统字体已验证，电池长时间待机、充电与所有字体恢复场景仍需持续实测，不能保证完全杜绝误保护或异常唤醒。保留rc105回退下载。
+
+
+## Metalio S31 0.3.3-rc105 · 2026-10-26
+
+- 同步Pico PR46/47/48/49：设置开关改黑白轨道；密码键盘纯白底、等待和取消保留锁图；新增默认关闭的密码宽限期；设置提示与标题按实测字面对齐并限制长度。S31宽限仅在真实按键浅睡唤醒后判断，硬件重新开机、过期、无效时间或时钟回拨仍验证密码。
+
+- 日常锁屏改为浅睡十分钟后同步外挂PCF8563并硬件关机，不设RTC闹钟；关机前安全关闭书籍、字体及TF，失败保持锁屏并有界重试，配置和进度保留。
+- 合入原厂2.0.66的S31浅睡SDK唤醒修复，补齐MPLL校准和PSRAM时钟交接，保留看门狗与原厂供电顺序；添加有界复位/睡眠阶段诊断。
+- 共享中断需核验真实电源键后才补记解锁，定时及USB唤醒不直接解锁；异常复位禁用开书/导入字体恢复时仍保留已验证记录的锁屏门禁。硬件重新开机单击恢复不再暗中等待第二次按键，双击/密码及异常启动字体保护继续保留；无卡且无活动句柄时也允许浅睡。
+- 修复字体恢复宿主测试的平台选择，保留两机独立覆盖。
+- 本次仅发布S31，Pico版本保持。USB连接下的切页与短时锁屏唤醒已测试；十分钟以上电池待机、关机与续航仍待实机验证，不能保证所有自动解锁反馈均已解决。实测一次TPS屏幕电源启动超时，后续输出恢复，该偶发现象仍在排查；保留rc104回退下载。
+
+
 ## Metalio S31 0.3.3-rc104 · 2026-10-25
 
 - 壁纸、透明书封入口共用独立图片浏览器，保持16级灰阶与左右滑动；各入口只允许对应设定，透明书封仅列出PNG。图片切换和设定弹窗取消额外预清屏，统一圆角卡片和底部操作提示。
