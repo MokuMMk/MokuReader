@@ -126,6 +126,37 @@ int main(void) {
     }
     assert(held==16&&edge_runs>=10);
     puts("PASS: reader ripple holds all 16 unchanged grays and reduces at least ten gray-edge dark runs; existing text profile, targets and 37 phases unchanged");
+    // 普通翻页柔和档：厂商 GL16 原序，等灰全保持，只为“变成白”补四相擦白，
+    // 四相插在末尾定稿保持之前。
+    // Soft ordinary turn: vendor GL16 phases, every equal pair held, four whitening phases
+    // only for pixels turning white, inserted before the vendor's trailing settle holds.
+    const EpdWaveform* soft_turn = display_reader_soft_turn_waveform();
+    assert(soft_turn == display_reader_soft_turn_waveform() && soft_turn != &E0470_WAVEFORM);
+    const EpdWaveformPhases* st = e0470_waveform_phases(soft_turn, MODE_GL16);
+    const EpdWaveformPhases* vendor = e0470_waveform_phases(&E0470_WAVEFORM, MODE_GL16);
+    assert(vendor && st && !st->phase_times && !vendor->phase_times);
+    assert(st->phases == vendor->phases + 4);
+    const int drive = vendor->phases - 3;
+    for (int from = 0; from < 16; ++from)
+        for (int to = 0; to < 16; ++to)
+            for (int f = 0; f < drive; ++f) {
+                const int b = e0470_phase_action(st, f, to, from);
+                if (to == from) assert(b == 0);
+                else assert(b == e0470_phase_action(vendor, f, to, from));
+            }
+    for (int f = drive; f < drive + 4; ++f)
+        for (int from = 0; from < 16; ++from)
+            for (int to = 0; to < 16; ++to)
+                assert(e0470_phase_action(st, f, to, from) ==
+                       (to == 15 && from != 15 ? 2 : 0));
+    for (int i = 0; i < 3; ++i)
+        for (int from = 0; from < 16; ++from)
+            for (int to = 0; to < 16; ++to) {
+                assert(e0470_phase_action(st, drive + 4 + i, to, from) ==
+                       e0470_phase_action(vendor, drive + i, to, from));
+                assert(e0470_phase_action(st, drive + 4 + i, to, from) == 0);
+            }
+    puts("PASS: soft ordinary turn holds every equal pair, whitens only pixels that turn white, inserts those phases before the vendor's three settle holds, and never drives unchanged black or gray");
     puts("PASS: all 256 pairs, endpoints, holds, first/final actions, pulse counts, 37-frame timing and original LUT retained; optical validation pending");
     return 0;
 }
