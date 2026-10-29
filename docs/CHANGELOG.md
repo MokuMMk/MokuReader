@@ -1,5 +1,20 @@
 # 版本变更 / Changelog
 
+## Metalio S31 0.3.3-rc107 / S31 refresh and reading update
+
+- S31普通阅读沿用Moku的16灰GL37加六相白（43相），正文、图文与离开图片统一维护整页白底，等黑/等灰保持；水波纹保留原22相迁移并加六相白（28相），速读使用厂家DU14加四相白（18相）。均保留原页数全刷设置及原厂GC48恢复。
+  S31 ordinary reading retains Moku's16-gray GL37 plus six white phases(43), maintaining the whole white background for text/images/image exits while holding equal black/grays. Ripple retains22 transition phases plus six white phases(28); Fast BW uses vendorDU14 plus four whites(18). Retain user cleanup intervals and nativeGC48 recovery.
+- 主页快刷/水波纹切换将六/八相补白覆盖到未变化留白，涉及书架八相、其余六相；合并黑白、灰阶与横条输出，保留底栏图标。周期清理使用真实原厂GC48，成功后仅抵扣实际清理范围。
+  Fast/ripple root switches extend the same six/eight white phases to unchanged blanks(eight involving the shelf,six otherwise), combining BW/grays/marker while protecting navigation icons. Periodic cleanup uses actual nativeGC48 and clears only successfully covered accounting.
+- 设置/蓝牙列表保留文字与头像灰阶，上部八相、下部十相背景维护在同轮输出（58/60相）；每八次实际变化的滚动以原厂GC48区域清理替换当次输出，不在松手或空闲时追加刷新。
+  Settings/BLE lists retain glyph/avatar grays with upper-eight/lower-ten white drives in one58/60-phase output. Every eighth changed scroll replaces that output with exact-crop nativeGC48; release/idle adds no scan.
+- 收录液态玻璃书架、英文单词/TeX断词及词间对齐、TXT分卷目录与快速选卷。未设置时默认液态玻璃书架、Moon Clock与主页强刷；保留已有配置和阅读进度。
+  Include the liquid-glass shelf, English word/TeX hyphenation and spacing, TXT volume-aware TOC and quick volume selection. Unconfigured devices default to the liquid-glass shelf,Moon Clock and full Home refresh; existing preferences and reading positions remain.
+- 本次只发布Metalio S31，Pico正式固件及下载保持rc102。支持保留数据更新，并保留rc106原包回退；刷新观感依面板状态而异。
+  Publish Metalio S31 only; Pico remains rc102. Support data-preserving updates and retain originalrc106 rollback packages; optical results depend on panel condition.
+
+
+
 
 ## 0.3.3-rc102 · 2026-10-29
 
