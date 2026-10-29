@@ -739,7 +739,8 @@ int main(void) {
     for(int changed=0;changed<2;++changed)for(int full=0;full<2;++full){
         reset();main_mode=mode;if(changed)target(7);else memcpy(final,front,BYTES);
         display_main_transition_arm(&owner_a,true,changing);display_main_quality_set(scope);
-        if(full)display_request_full_refresh();unsigned before=quality_calls;
+        if(full)display_request_full_refresh();
+        unsigned before=quality_calls;
         assert(update_display_fast_page(&hl)==EPD_DRAW_SUCCESS);assert_final();
         assert((quality_calls>before)==(scope&&changing&&changed&&!full));
         if(quality_calls>before)assert(quality_strength==scope);

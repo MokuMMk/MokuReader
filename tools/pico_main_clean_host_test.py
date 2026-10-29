@@ -36,7 +36,8 @@ static void verify(const EpdWaveform *source,int mode,unsigned white){
  for(int f=s->phases-1;f>=0&&holds<3;--f){
   bool empty=true;for(int to=0;to<16;++to)for(int from=0;from<16;++from)
    if(to!=from&&e0470_phase_action(s,f,to,from))empty=false;
-  if(!empty)break;++holds;
+  if(!empty)break;
+  ++holds;
  }
  assert(p->phases==s->phases+(int)white+(holds?0:1));
  const int drive=s->phases-holds;
