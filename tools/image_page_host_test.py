@@ -57,7 +57,7 @@ enum EpdDrawError {EPD_DRAW_SUCCESS};
 static const int E0470_FULL_WAVEFORM=0;
 static bool test_binary;
 static void display_main_transition_cancel(void){}
-static int update_display_area_full_with(void *hl,const int *wave,int mode,EpdRect area){(void)hl;assert(!test_binary&&wave==&E0470_FULL_WAVEFORM&&mode==MODE_GL16&&area.x==0&&area.y==0&&area.width==684&&area.height==1216);++test_presentations;return 0;}
+static enum EpdDrawError update_display_area_full_with(void *hl,const int *wave,int mode,EpdRect area){(void)hl;assert(!test_binary&&wave==&E0470_FULL_WAVEFORM&&mode==MODE_GL16&&area.x==0&&area.y==0&&area.width==684&&area.height==1216);++test_presentations;return 0;}
 typedef enum {UI_ICON_LOCK,UI_ICON_HOUSE,UI_ICON_BOOKMARK,UI_ICON_CHEVRON_RIGHT} ui_icon_t;
 static bool glass_fail;
 static bool ui_glass_panel_frost(uint8_t *fb,EpdRect r,int radius,int white,int refract,bool soften){(void)fb;assert(r.x==70&&r.y==346&&r.width==544&&(r.height==468||r.height==372)&&radius==28&&white>=95&&refract==3&&soften);return !glass_fail;}
@@ -78,7 +78,7 @@ static bool ui_glass_panel_frost(uint8_t *fb,EpdRect r,int radius,int white,int 
 static void ui_draw_icon(uint8_t *fb,int x,int y,int size,ui_icon_t icon,uint8_t gray){(void)fb;(void)x;(void)y;(void)size;(void)icon;assert(!gray);}
 static void ui_draw_button(uint8_t *fb,EpdRect r,const char *text,bool on){(void)fb;assert((r.y==642||r.y==546)&&!strcmp(text,"取消")&&!on);}
 
-static int update_display_area_diff_with(void *hl,const int *wave,int mode,EpdRect area){(void)hl;assert(wave==&E0470_FULL_WAVEFORM&&mode==MODE_GL16&&area.x==0&&area.y==0&&area.width==684&&area.height==1216);++test_presentations;return 0;}
+static enum EpdDrawError update_display_area_diff_with(void *hl,const int *wave,int mode,EpdRect area){(void)hl;assert(wave==&E0470_FULL_WAVEFORM&&mode==MODE_GL16&&area.x==0&&area.y==0&&area.width==684&&area.height==1216);++test_presentations;return 0;}
 static enum EpdDrawError update_display_full(void *hl){(void)hl;++test_presentations;return EPD_DRAW_SUCCESS;}
 #endif
 static void *heap_caps_calloc(size_t n,size_t size,int cap){(void)cap;return test_alloc_fail?NULL:calloc(n,size);}
@@ -98,7 +98,7 @@ static void ui_text(uint8_t *fb,...){(void)fb;}
 static void ui_hairline(uint8_t *fb,...){(void)fb;}
 static void ui_fill_round_rect(uint8_t *fb,...){(void)fb;}
 static void ui_draw_round_rect(uint8_t *fb,...){(void)fb;}
-static int update_display_image_gray(void *hl){(void)hl;++test_presentations;return 0;}
+static enum EpdDrawError update_display_image_gray(void *hl){(void)hl;++test_presentations;return 0;}
 static void guard_draw_result(void *hl,int result){(void)hl;assert(!result);}
 static void *app_home_page(void){return NULL;}
 static int ui_nav_hit(int x,int y){(void)x;(void)y;return -1;}
