@@ -20,6 +20,8 @@ typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL,AP
 enum EpdDrawError {EPD_DRAW_SUCCESS,EPD_DRAW_OTHER_ERROR};
 enum {READING,SHELF,MANAGE,EDIT,SEARCH,TOC,READER_PANEL_NONE,READER_PANEL_BACKGROUND_PREVIEW};
 enum {MODE_DU,MODE_GL16,MODE_GC16,APP_PAGE_REFRESH_MODE=MODE_GL16};
+#define UI_LOCK_WIDTH 684
+#define UI_LOCK_HEIGHT 1216
 #define TAG "test"
 #define ESP_LOGI(...) ((void)0)
 #define portMAX_DELAY 0
@@ -85,7 +87,9 @@ static enum EpdDrawError update_display_area_with(void *hl,const int *wave,int m
 #define update_display_with(...) push(16)
 #define update_display_mode_diff(...) push(17)
 #define display_main_normal_waveform() (&E0470_WAVEFORM)
-#define update_display_water_turn(...) push(18)
+static enum EpdDrawError update_display_water_turn(void *hl,EpdRect area,int dir){
+ (void)hl;(void)dir;return push_area(18,&soft_turn_waveform,MODE_GL16,area);
+}
 #define E0470_TURN_RTL 0
 static enum EpdDrawError update_display_text_turn(void *hl,EpdRect area,int dir) {
  (void)hl;(void)dir;assert(tick==2);return push_area(20,&E0470_FULL_WAVEFORM,MODE_DU,area);
@@ -164,7 +168,16 @@ int main(void){
  reset();s_reader_turn_pending=false;s_mode=MODE_DU;s_reader_footer_pending=false;
  present(&ctx,APP_REDRAW_AREA);assert(calls==2&&modes[0]==MODE_DU&&waves[0]==&E0470_FOLLOW_WAVEFORM);
  reset();s_water_turn_pending=true;s_reader_footer_pending=false;
- present(&ctx,APP_REDRAW_AREA);assert(selected==13&&calls==2&&!s_water_turn_pending);
+ present(&ctx,APP_REDRAW_AREA);assert(selected==18&&calls==1&&!s_water_turn_pending);
+ same_area(areas[0],ui_rect_union(reader_area(),reader_fullscreen_progress_area()));
+ // Ripple and footer share one staggered output across fullscreen, status and direction choices.
+ for(int full=0;full<2;++full)for(int hidden=0;hidden<2;++hidden)for(int dir=0;dir<4;++dir){
+  reset();s_reader_fullscreen=full;immersive=hidden;s_area=reader_area();
+  s_water_turn_pending=true;s_reader_footer_pending=!full;s_water_turn_dir=dir;
+  assert(present(&ctx,APP_REDRAW_AREA)&&calls==1&&selected==18);
+  same_area(areas[0],ui_rect_union(reader_area(),full?reader_fullscreen_progress_area():progress_rect()));
+  assert(!s_reader_footer_pending&&!s_water_turn_pending);
+ }
  reset();images=1;s_reader_image_refresh_pending=true;s_reader_footer_pending=false;
  present(&ctx,APP_REDRAW_AREA);assert(selected==13&&calls==1&&waves[0]==&soft_turn_waveform&&!s_reader_text_frame);
  same_area(areas[0],(EpdRect){0,0,684,1216});

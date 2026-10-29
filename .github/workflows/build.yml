@@ -22,6 +22,12 @@ jobs:
           bash tools/run_water_turn_host_test.sh
           bash tools/run_display_host_test.sh
           bash tools/run_display_navigation_tests.sh
+          python3 tools/pico_main_clean_host_test.py
+          python3 tools/english_hyphen_host_test.py
+          python3 tools/txt_navigation_host_test.py
+          python3 tools/txt_volume_host_test.py
+          python3 tools/liquid_shelf_style_host_test.py
+          python3 tools/image_page_host_test.py
           python3 tools/pmic_gate_host_test.py
           python3 tools/boot_panel_actions_host_test.py
           python3 tools/lock_pin_host_test.py

@@ -7,6 +7,8 @@
  * Frozen: Advance at most two settling phases only for white-to-midgray pairs. Keep endpoints,
  * all other pairs, original tables and frame timing. Equal pulse counts do not guarantee equal
  * optical grays; validate this ordering on the panel against tone and ghosting.
+ * User revision2026-10-29: the reader-ripple wrapper inserts four changed-white
+ * phases before the original three settle holds; the underlying37-phase function stays unchanged.
  */
 #include "display_reader_waveform.h"
 #include "e0470_epaper_waveform.h"
@@ -176,4 +178,42 @@ bool display_reader_fast_text_prepare(EpdiyHighlevelState* hl, EpdRect area) {
         if (col < end) { uint8_t v = p[col/2]; p[col/2] = (uint8_t)((v & 0xf0) | ((v & 8) ? 15 : 0)); }
     }
     return true;
+}
+
+// User revision 2026-10-29: retain every reader-ripple gray phase and insert
+// four changed-white drives before the existing three settle holds.
+#define READER_WATER_WHITE 4
+#define READER_WATER_HOLDS 3
+#define READER_WATER_PHASES (E0470_GL16_FRAMES + READER_WATER_WHITE)
+static uint8_t s_water_data[READER_WATER_PHASES][16][4];
+static const EpdWaveformPhases s_water_phases = {
+    READER_WATER_PHASES, (const uint8_t*)s_water_data, NULL
+};
+static const EpdWaveformPhases* s_water_ranges[] = {&s_water_phases};
+static const EpdWaveformMode s_water_mode = {MODE_GL16, 1, s_water_ranges};
+static const EpdWaveformMode* s_water_modes[] = {&s_water_mode};
+static EpdWaveform s_water_waveform = {
+    .num_modes=1, .num_temp_ranges=1, .mode_data=s_water_modes
+};
+static bool s_water_ready;
+
+const EpdWaveform* display_reader_water_waveform(void) {
+    if (s_water_ready) return &s_water_waveform;
+    const EpdWaveform* source=display_reader_text_waveform();
+    const EpdWaveformPhases* phases=e0470_waveform_phases(source,MODE_GL16);
+    if (!phases || !phases->luts || phases->phase_times ||
+        phases->phases!=E0470_GL16_FRAMES) return source;
+    const int drive=phases->phases-READER_WATER_HOLDS;
+    for (int f=drive;f<phases->phases;++f)
+        for(int i=0;i<64;++i) if(phases->luts[f*64+i]) return source;
+    memcpy(s_water_data,phases->luts,(size_t)drive*64);
+    memset(s_water_data+drive,0,READER_WATER_WHITE*64);
+    memcpy(s_water_data+drive+READER_WATER_WHITE,phases->luts+(size_t)drive*64,
+           READER_WATER_HOLDS*64);
+    for(int f=drive;f<drive+READER_WATER_WHITE;++f)
+        for(int from=0;from<15;++from)
+            s_water_data[f][15][from/4]|=(uint8_t)(2u<<(6-2*(from%4)));
+    s_water_waveform.temp_intervals=source->temp_intervals;
+    s_water_ready=true;
+    return &s_water_waveform;
 }
