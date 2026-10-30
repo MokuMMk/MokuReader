@@ -137,18 +137,25 @@ int main(void) {
     assert(vendor && st && !st->phase_times && !vendor->phase_times);
     assert(st->phases == vendor->phases + 4);
     const int drive = vendor->phases - 3;
+    unsigned equal_gray_refreshes = 0;
     for (int from = 0; from < 16; ++from)
         for (int to = 0; to < 16; ++to)
             for (int f = 0; f < drive; ++f) {
+                const int a = e0470_phase_action(vendor, f, to, from);
                 const int b = e0470_phase_action(st, f, to, from);
-                if (to == from) assert(b == 0);
-                else assert(b == e0470_phase_action(vendor, f, to, from));
+                if (to == 0 && from == 0) {
+                    assert(b == (a == 2 ? 0 : a));
+                    continue;
+                }
+                assert(b == a);
+                if (to == from && a != 0) ++equal_gray_refreshes;
             }
+    assert(equal_gray_refreshes > 0);
     for (int f = drive; f < drive + 4; ++f)
         for (int from = 0; from < 16; ++from)
             for (int to = 0; to < 16; ++to)
                 assert(e0470_phase_action(st, f, to, from) ==
-                       (to == 15 && from != 15 ? 2 : 0));
+                       (to == 15 ? 2 : 0));
     for (int i = 0; i < 3; ++i)
         for (int from = 0; from < 16; ++from)
             for (int to = 0; to < 16; ++to) {
@@ -156,7 +163,7 @@ int main(void) {
                        e0470_phase_action(vendor, drive + i, to, from));
                 assert(e0470_phase_action(st, drive + 4 + i, to, from) == 0);
             }
-    puts("PASS: soft ordinary turn holds every equal pair, whitens only pixels that turn white, inserts those phases before the vendor's three settle holds, and never drives unchanged black or gray");
+    puts("PASS: soft ordinary turn keeps vendor sequences and equal-gray refresh, drops only black-on-black erase phases, inserts four whole-white phases before the vendor settle holds");
     const EpdWaveform* water_wave=display_reader_water_waveform();
     const EpdWaveformPhases* water=e0470_waveform_phases(water_wave,MODE_GL16);
     assert(water_wave==display_reader_water_waveform() && water && water->phases==soft->phases+4);

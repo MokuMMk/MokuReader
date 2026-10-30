@@ -3778,7 +3778,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         // 图文页也走真实差分：只驱动变化的像素，未变黑区保持；整屏白底末尾统一补擦白。
         // Text-plus-image pages use true differences too: only changed pixels drive, unchanged
         // black holds, and every white target on the whole panel gets the trailing erase.
-        err = update_display_area_diff_with(ctx->hl, display_reader_soft_turn_waveform(), MODE_GL16,
+        err = update_display_area_full_with(ctx->hl, display_reader_soft_turn_waveform(), MODE_GL16,
                                             (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT});
         // 整屏差分已含页脚与全屏进度，不再追加第二次局部输出。
         // The whole-panel difference already covers the footer and full-screen progress.
@@ -3788,7 +3788,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         // Whole-page image repaints also drive changed pixels only; explicit full refreshes still run
         // the complete GC16.
         err = redraw != APP_REDRAW_FULL && !s_reader_cleanup
-            ? update_display_area_diff_with(ctx->hl, display_reader_soft_turn_waveform(), MODE_GL16,
+            ? update_display_area_full_with(ctx->hl, display_reader_soft_turn_waveform(), MODE_GL16,
                                             (EpdRect){0,0,UI_LOCK_WIDTH,UI_LOCK_HEIGHT})
             : update_display_with(ctx->hl, &E0470_FULL_WAVEFORM, MODE_GC16);
     }
@@ -3839,7 +3839,7 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
                 // Ordinary turns use soft differences: vendor GL16 order with equal midgrays
                 // held, then four contrast phases that whiten every white target and darken
                 // every black target across the panel, keeping blanks clean and text inky.
-                ? update_display_area_diff_with(ctx->hl, display_reader_soft_turn_waveform(),
+                ? update_display_area_full_with(ctx->hl, display_reader_soft_turn_waveform(),
                     s_mode, s_reader_turn_pending
                         ? (EpdRect){0, 0, UI_LOCK_WIDTH, UI_LOCK_HEIGHT} : turn_area)
                 // 其余局部正文刷新（图片页之后、换章首帧、灰阶回落）也只驱动变化像素。
