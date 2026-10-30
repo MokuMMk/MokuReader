@@ -11,6 +11,7 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include "esp_heap_caps.h"
+#include "read_pico_webp.h"
 #include "jpeg_decoder.h"
 #include "JPEGDEC.h"
 #include "png.h"
@@ -220,6 +221,36 @@ static bool jpegdec_gray(const uint8_t *data, size_t size, unsigned frame_width,
     return ok;
 }
 
+// RGB565 平面 → 目标灰度：长边铺满、居中裁剪、双线性；基线 JPEG 与 WebP 共用。
+// RGB565 plane to target gray: fill the longer side, centre-crop, bilinear; shared by baseline
+// JPEG and WebP.
+static bool rgb565_plane_gray(const uint8_t *pixels, unsigned source_width, unsigned source_height,
+                              unsigned out_width, unsigned out_height, uint8_t *out) {
+    if (!pixels || !source_width || !source_height) return false;
+    const book_crop_t crop = book_cover_crop(source_width, source_height, out_width, out_height);
+    scale_step_t *xmap = scale_map(out_width, crop.width);
+    scale_step_t *ymap = scale_map(out_height, crop.height);
+    if (!xmap || !ymap) { free(xmap); free(ymap); return false; }
+    for (unsigned y = 0; y < out_height; ++y) {
+        const int sy = ymap[y].at, fy = ymap[y].frac;
+        const int sy1 = scale_next(sy, crop.height);
+        const uint8_t *r0 = pixels + (size_t)(crop.y + (unsigned)sy) * source_width * 2;
+        const uint8_t *r1 = pixels + (size_t)(crop.y + (unsigned)sy1) * source_width * 2;
+        for (unsigned x = 0; x < out_width; ++x) {
+            const int sx = xmap[x].at, fx = xmap[x].frac;
+            const int sx1 = scale_next(sx, crop.width);
+            out[y * out_width + x] = bilinear4(
+                rgb565_gray(r0, crop.x + (unsigned)sx), rgb565_gray(r0, crop.x + (unsigned)sx1),
+                rgb565_gray(r1, crop.x + (unsigned)sx), rgb565_gray(r1, crop.x + (unsigned)sx1),
+                fx, fy);
+        }
+        decode_yield(y);
+    }
+    free(xmap);
+    free(ymap);
+    return true;
+}
+
 static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
                       unsigned out_height, uint8_t *out) {
     if (size > UINT32_MAX) return false;
@@ -241,37 +272,28 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
         if (!pixels) continue;
         cfg.outbuf = pixels;
         cfg.outbuf_size = info.output_len;
-        if (esp_jpeg_decode(&cfg, &info) == ESP_OK) {
-            // 长边铺满再居中裁剪，长宽比不同也不拉伸。
-            // Fill by the longer side and centre-crop, so a different aspect ratio is not stretched.
-            const book_crop_t crop = book_cover_crop(info.width, info.height, out_width, out_height);
-            scale_step_t *xmap = scale_map(out_width, crop.width);
-            scale_step_t *ymap = scale_map(out_height, crop.height);
-            if (xmap && ymap) {
-                for (unsigned y = 0; y < out_height; ++y) {
-                    const int sy = ymap[y].at, fy = ymap[y].frac;
-                    const int sy1 = scale_next(sy, crop.height);
-                    const uint8_t *r0 = pixels + (size_t)(crop.y + (unsigned)sy) * info.width * 2;
-                    const uint8_t *r1 = pixels + (size_t)(crop.y + (unsigned)sy1) * info.width * 2;
-                    for (unsigned x = 0; x < out_width; ++x) {
-                        const int sx = xmap[x].at, fx = xmap[x].frac;
-                        const int sx1 = scale_next(sx, crop.width);
-                        out[y * out_width + x] = bilinear4(
-                            rgb565_gray(r0, crop.x + (unsigned)sx), rgb565_gray(r0, crop.x + (unsigned)sx1),
-                            rgb565_gray(r1, crop.x + (unsigned)sx), rgb565_gray(r1, crop.x + (unsigned)sx1),
-                            fx, fy);
-                    }
-                    decode_yield(y);
-                }
-                decoded = true;
-            }
-            free(xmap);
-            free(ymap);
-        }
+        if (esp_jpeg_decode(&cfg, &info) == ESP_OK)
+            decoded = rgb565_plane_gray(pixels, info.width, info.height, out_width, out_height, out);
         free(pixels);
         if (decoded) break;
     }
     return decoded;
+}
+
+// WebP：先整幅/限幅解成 RGB565 平面，再走与基线 JPEG 相同的裁剪缩放。
+// WebP: decode a (size-capped) RGB565 plane, then reuse the same crop/scale as baseline JPEG.
+static bool webp_gray(const uint8_t *data, size_t size, unsigned out_width, unsigned out_height,
+                      uint8_t *out) {
+    // 与 jpeg_gray 同一预算：封面尺寸 3 MiB，其余 6 MiB；RGB565 两字节一像素。
+    // Same budget as jpeg_gray: 3 MiB for cover-sized output, 6 MiB otherwise; two bytes per pixel.
+    const size_t limit = out_width <= BOOK_COVER_W && out_height <= BOOK_COVER_H
+        ? 3u * 1024u * 1024u : 6u * 1024u * 1024u;
+    uint8_t *plane = NULL;
+    unsigned source_width = 0, source_height = 0;
+    if (!read_pico_webp_rgb565(data, size, limit / 2, &plane, &source_width, &source_height)) return false;
+    const bool ok = rgb565_plane_gray(plane, source_width, source_height, out_width, out_height, out);
+    free(plane);
+    return ok;
 }
 
 typedef struct { const uint8_t *data; size_t size, pos; FILE *file; } png_input_t;
@@ -400,6 +422,9 @@ bool book_image_grayscale(const uint8_t *data, size_t size, bool png,
     if (!data || !size || !out || !out_width || !out_height ||
         out_width > 1216 || out_height > 1216 || (size_t)out_width * out_height > 684u * 1216u)
         return false;
+    // 格式按签名分派：WebP 的 png 标记为 false，不能落进 JPEG 分支。
+    // Dispatch on the signature: WebP arrives with png=false and must not fall into JPEG.
+    if (book_webp_is(data, size)) return webp_gray(data, size, out_width, out_height, out);
     return png ? png_gray_input(data, size, NULL, out_width, out_height, out, NULL)
                : jpeg_gray(data, size, out_width, out_height, out);
 }
@@ -693,7 +718,18 @@ bool book_image_file_dimensions(const char *path, bool png, unsigned *width, uns
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     *width = *height = 0;
-    bool ok = file_frame(file, png, NULL, width, height);
+    // WebP 的尺寸在文件头 32 字节内，先按签名认，避免把整本图片读进来。
+    // WebP sizes live in the first 32 bytes; recognise the signature before reading the whole file.
+    uint8_t head[64];
+    const size_t got = fread(head, 1, sizeof(head), file);
+    bool ok = false;
+    if (book_webp_is(head, got)) {
+        unsigned w = 0, h = 0;
+        ok = book_webp_frame(head, got, &w, &h) && w > 0 && h > 0 && w <= 8192 && h <= 8192;
+        if (ok) { *width = w; *height = h; }
+    } else if (!fseek(file, 0, SEEK_SET)) {
+        ok = file_frame(file, png, NULL, width, height);
+    }
     fclose(file);
     return ok;
 }
@@ -769,18 +805,34 @@ bool book_image_file_grayscale(const char *path, bool png, unsigned width, unsig
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     bool ok = false;
-    if (png) ok = png_gray_input(NULL, (size_t)st.st_size, file, width, height, out, NULL);
-    else {
-        uint8_t sof = 0;
-        unsigned source_w = 0, source_h = 0;
-        if (file_frame(file, false, &sof, &source_w, &source_h) && !fseek(file, 0, SEEK_SET)) {
-            jpeg_file_plane_t plane = {.out = out, .width = width, .height = height};
-            memset(out, 255, (size_t)width * height);
-            if (sof == 0xc2)
-                ok = jpegdec_gray_file(file, (int)st.st_size, source_w, source_h, width, height, true,
-                    jpeg_file_collect, &plane, &plane.source_w, &plane.source_h) != 0;
-            else ok = jpeg_baseline_file(file, source_w, source_h, width, height, &plane);
-            ok = ok && plane.pixels >= (size_t)width * height;
+    // WebP 解码需要完整码流：只给 WebP 读整文件（上限 12 MiB），JPEG/PNG 仍走流式。
+    // WebP decoding needs the whole bitstream: read it (12 MiB cap) for WebP only; JPEG/PNG stay
+    // streaming.
+    uint8_t head[64];
+    const size_t got = fread(head, 1, sizeof(head), file);
+    if (book_webp_is(head, got)) {
+        if ((uint64_t)st.st_size <= 12u * 1024u * 1024u && !fseek(file, 0, SEEK_SET)) {
+            uint8_t *image = cover_alloc((size_t)st.st_size);
+            if (image) {
+                if (fread(image, 1, (size_t)st.st_size, file) == (size_t)st.st_size)
+                    ok = webp_gray(image, (size_t)st.st_size, width, height, out);
+                free(image);
+            }
+        }
+    } else if (fseek(file, 0, SEEK_SET) == 0) {
+        if (png) ok = png_gray_input(NULL, (size_t)st.st_size, file, width, height, out, NULL);
+        else {
+            uint8_t sof = 0;
+            unsigned source_w = 0, source_h = 0;
+            if (file_frame(file, false, &sof, &source_w, &source_h) && !fseek(file, 0, SEEK_SET)) {
+                jpeg_file_plane_t plane = {.out = out, .width = width, .height = height};
+                memset(out, 255, (size_t)width * height);
+                if (sof == 0xc2)
+                    ok = jpegdec_gray_file(file, (int)st.st_size, source_w, source_h, width, height, true,
+                        jpeg_file_collect, &plane, &plane.source_w, &plane.source_h) != 0;
+                else ok = jpeg_baseline_file(file, source_w, source_h, width, height, &plane);
+                ok = ok && plane.pixels >= (size_t)width * height;
+            }
         }
     }
     fclose(file);

@@ -16,6 +16,7 @@ jobs:
         run: |
           python3 tools/license_notices_host_test.py
           python3 tools/test_book_epub.py
+          python3 tools/webp_host_test.py
           python3 tools/test_zip_reader.py
           python3 tools/font_picker_catalog_host_test.py
           python3 tools/font_catalog_host_test.py

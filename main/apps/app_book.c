@@ -2071,7 +2071,8 @@ static void reader_background_scan(void) {
         // AppleDouble ._ files and other hidden metadata are not images.
         if (ent->d_name[0] == '.') continue;
         const char *ext = strrchr(ent->d_name, '.');
-        if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png"))) continue;
+        if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png") &&
+                     strcasecmp(ext, ".webp"))) continue;
         char path[288]; struct stat st;
         int n = snprintf(path, sizeof(path), "/sdcard/pictures/%s", ent->d_name);
         if (n < 0 || n >= (int)sizeof(path) || stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0) continue;

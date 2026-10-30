@@ -1995,7 +1995,8 @@ esp_err_t book_epub_image(book_epub_t *book, size_t chapter, const char *src,
     if (err != ESP_OK) { free(image); return err; }
     bool is_png = n >= 8 && !memcmp(image, "\x89PNG\r\n\x1a\n", 8);
     bool is_jpeg = n >= 3 && image[0] == 0xff && image[1] == 0xd8 && image[2] == 0xff;
-    if (!is_png && !is_jpeg) {
+    bool is_webp = book_webp_is(image, n);
+    if (!is_png && !is_jpeg && !is_webp) {
         // 许多中文 EPUB 用 SVG 只包一张 JPEG/PNG。解析这一层引用即可复用现有低内存解码器。
         // Many Chinese EPUBs wrap one JPEG/PNG in SVG. Resolve that one reference and reuse the bounded decoder.
         char nested[EPUB_PATH_CAP] = {0};
@@ -2026,7 +2027,8 @@ esp_err_t book_epub_image(book_epub_t *book, size_t chapter, const char *src,
         if (err != ESP_OK) { free(image); return err; }
         is_png = n >= 8 && !memcmp(image, "\x89PNG\r\n\x1a\n", 8);
         is_jpeg = n >= 3 && image[0] == 0xff && image[1] == 0xd8 && image[2] == 0xff;
-        if (!is_png && !is_jpeg) { free(image); return ESP_ERR_NOT_SUPPORTED; }
+        is_webp = book_webp_is(image, n);
+        if (!is_png && !is_jpeg && !is_webp) { free(image); return ESP_ERR_NOT_SUPPORTED; }
     }
     *data = image; *size = n; *png = is_png;
     return ESP_OK;
@@ -2156,7 +2158,8 @@ esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size
                 if (!attribute(t, "id", scratch->id, sizeof(scratch->id)) || !attribute(t, "href", scratch->href, sizeof(scratch->href)) ||
                     !attribute(t, "media-type", scratch->media, sizeof(scratch->media)) || !attribute(t, "properties", scratch->props, sizeof(scratch->props))) continue;
                 bool png = !strcmp(scratch->media, "image/png"), jpeg = !strcmp(scratch->media, "image/jpeg") || !strcmp(scratch->media, "image/jpg");
-                if (!(png || jpeg) || !(word(scratch->props, "cover-image") || (scratch->cover_id[0] && !strcmp(scratch->id, scratch->cover_id)))) continue;
+                bool webp = !strcmp(scratch->media, "image/webp");
+                if (!(png || jpeg || webp) || !(word(scratch->props, "cover-image") || (scratch->cover_id[0] && !strcmp(scratch->id, scratch->cover_id)))) continue;
                 if (resolve_path(scratch->opf, scratch->href, scratch->cover_path)) { cover_png = png; break; }
             }
         }

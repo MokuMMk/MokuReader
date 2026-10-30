@@ -66,7 +66,8 @@ static bool image_name(const char *name, bool *png) {
     const char *ext = strrchr(name, '.');
     if (!ext) return false;
     *png = !strcasecmp(ext, ".png");
-    return *png || !strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg");
+    // WebP 也收：解码入口按文件签名分派，png 标记只对 PNG 有意义。/ WebP is accepted too; the decoder dispatches on the file signature.
+    return *png || !strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg") || !strcasecmp(ext, ".webp");
 }
 
 static void scan_dir(const char *root) {
