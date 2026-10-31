@@ -141,14 +141,14 @@ int main(void){
  present(&ctx,APP_REDRAW_DONE);assert(!calls&&s_turns==7&&s_presented_view==SHELF);
  ctx.request_app=true;present(&ctx,APP_REDRAW_PAGE);
  assert(!calls&&s_turns==7&&s_presented_view==SHELF);ctx.request_app=false;
- // 普通翻页整屏推白：一次柔和差分覆盖整屏白底（含页脚），黑字/中灰保持。
- // Ordinary turns whiten the whole panel in one soft difference, footer included.
+ // Pico普通翻页整屏全像素GL16，正文与信息栏一次提交。
+ // Pico ordinary turns use one full-pixel GL16 scan, including metadata.
  for(int full=0;full<2;++full)for(int hide_status=0;hide_status<2;++hide_status){
   reset();s_reader_fullscreen=full;immersive=hide_status;s_reader_footer_pending=false;s_area=reader_area();
   assert(present(&ctx,APP_REDRAW_AREA));
-  assert(calls==1&&selected==13&&modes[0]==MODE_GL16&&waves[0]==&soft_turn_waveform&&s_reader_text_frame);
-  same_area(areas[0],reader_area());
-  assert(s_reader_footer_pending==!!full&&!s_reader_cleanup);if(full)assert(s_reader_footer_due_ms==1800);
+  assert(calls==1&&selected==14&&modes[0]==MODE_GL16&&waves[0]==&soft_turn_waveform&&s_reader_text_frame);
+  same_area(areas[0],(EpdRect){0,0,684,1216});
+  assert(!s_reader_footer_pending&&!s_reader_cleanup);
  }
  for(int full=0;full<2;++full){
   reset();s_reader_fullscreen=full;s_reader_cleanup=true;
@@ -160,7 +160,7 @@ int main(void){
  reset();s_reader_turn_pending=false;present(&ctx,APP_REDRAW_FULL);assert(calls==1&&selected==12&&rendered==1);
  reset();s_reader_turn_pending=false;present(&ctx,APP_REDRAW_PAGE);assert(calls==1&&selected==13&&rendered==1);
  reset();fail=1;s_reader_footer_pending=false;
- present(&ctx,APP_REDRAW_AREA);assert(calls==1&&selected==13&&!s_reader_text_frame);
+ present(&ctx,APP_REDRAW_AREA);assert(calls==1&&selected==14&&!s_reader_text_frame);
  // 非翻页局部、背景和图片同样只推真实差分；未变化像素不驱动，DU 继续用跟随表。
  // Other local, background and image updates also present true differences only;
  // unchanged pixels are not driven and DU keeps the follow table.
@@ -183,10 +183,10 @@ int main(void){
   assert(s_reader_footer_pending==!!full&&!s_water_turn_pending);
  }
  reset();images=1;s_reader_image_refresh_pending=true;s_reader_footer_pending=false;
- present(&ctx,APP_REDRAW_AREA);assert(selected==13&&calls==1&&waves[0]==&soft_turn_waveform&&!s_reader_text_frame);
- same_area(areas[0],reader_area());
+ present(&ctx,APP_REDRAW_AREA);assert(selected==14&&calls==1&&waves[0]==&soft_turn_waveform&&!s_reader_text_frame);
+ same_area(areas[0],(EpdRect){0,0,684,1216});
  reset();images=1;s_reader_image_refresh_pending=true;s_reader_footer_pending=false;tick=1;
- present(&ctx,APP_REDRAW_AREA);assert(selected==13&&calls==1&&waves[0]==&soft_turn_waveform&&!s_reader_text_frame);tick=0;
+ present(&ctx,APP_REDRAW_AREA);assert(selected==14&&calls==1&&waves[0]==&soft_turn_waveform&&!s_reader_text_frame);tick=0;
  reset();s_reader_clock_pending=true;s_reader_fullscreen=false;s_reader_turn_pending=false;
  s_reader_clock_painted_minute=321;
  present(&ctx,APP_REDRAW_AREA);assert(calls==1&&selected==13&&s_reader_clock_minute==321&&!s_reader_clock_pending);
@@ -214,7 +214,7 @@ int main(void){
  }
  reset();tick=2;fail=1;present(&ctx,APP_REDRAW_AREA);assert(selected==20&&!s_reader_text_frame);
  puts("PASS: FastBW crops to body and defers metadata, preserves full/periodic/entry/image/background/panel routes and rejects failed history");
- puts("PASS: reader entry cleans once with complete GC16 including images/backgrounds, retaining failure retry; ordinary body differences retain erasure and defer metadata; periodic GC16, ripple, local controls, clock and cancellation retain their paths");
+ puts("PASS: reader entry cleans once with complete GC16 including images/backgrounds, retaining failure retry; ordinary Pico turns use full-pixel GL16 including metadata; periodic GC16, ripple, local controls, clock and cancellation retain their paths");
 }
 '''
 with tempfile.TemporaryDirectory(prefix='kiikoread-reader-release-') as folder:

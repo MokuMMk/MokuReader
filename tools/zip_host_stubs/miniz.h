@@ -10,7 +10,27 @@
 #include <zlib.h>
 typedef unsigned char mz_uint8;
 typedef unsigned int mz_uint32;
-typedef struct { z_stream stream; int initialized; } tinfl_decompressor;
+// ROM tinfl的状态自包含，前缀提取可直接释放；zlib替身也把工作区放进同一个对象。
+// ROM tinfl state is self-contained and prefix reads may discard it; keep zlib's workspace in that same object.
+typedef struct {
+    z_stream stream;
+    int initialized;
+    size_t used;
+    union { max_align_t alignment; unsigned char bytes[49152]; } workspace;
+} tinfl_decompressor;
+static inline voidpf tinfl_host_alloc(voidpf opaque, uInt items, uInt size) {
+    tinfl_decompressor *state = opaque;
+    const size_t align = _Alignof(max_align_t);
+    const size_t offset = (state->used + align - 1) / align * align;
+    const size_t bytes = (size_t)items * size;
+    if ((items && bytes / items != size) || offset > sizeof(state->workspace.bytes) ||
+        bytes > sizeof(state->workspace.bytes) - offset) return NULL;
+    void *result = state->workspace.bytes + offset;
+    memset(result, 0, bytes);
+    state->used = offset + bytes;
+    return result;
+}
+static inline void tinfl_host_free(voidpf opaque, voidpf address) { (void)opaque; (void)address; }
 typedef enum { TINFL_STATUS_FAILED = -1, TINFL_STATUS_DONE = 0,
                TINFL_STATUS_NEEDS_MORE_INPUT = 1, TINFL_STATUS_HAS_MORE_OUTPUT = 2 } tinfl_status;
 #define TINFL_FLAG_USING_NON_WRAPPING_OUTPUT_BUF 4
@@ -20,6 +40,10 @@ static inline tinfl_status tinfl_decompress(tinfl_decompressor* state, const mz_
     size_t* in_size, mz_uint8* start, mz_uint8* output, size_t* out_size, mz_uint32 flags) {
     (void)start; (void)flags;
     if (!state->initialized) {
+        state->used = 0;
+        state->stream.zalloc = tinfl_host_alloc;
+        state->stream.zfree = tinfl_host_free;
+        state->stream.opaque = state;
         if (inflateInit2(&state->stream, -MAX_WBITS) != Z_OK) return TINFL_STATUS_FAILED;
         state->initialized = 1;
     }

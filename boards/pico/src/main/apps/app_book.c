@@ -21,6 +21,8 @@
  * User2026-10-30: new books open with tools, centre taps toggle fullscreen and turns preserve it; immersion controls only the fullscreen style.
  * 用户2026-10-30追加：正文与书名/章数/进度独立，停下后精确局刷信息栏；进度条位置不动，仅向下加粗。
  * User2026-10-30 follow-up: crop body turns independently, defer exact metadata updates until idle, and thicken the progress bar downward at its existing position.
+ * 用户2026-10-31合并PR55：Pico普通/图文翻页全像素GL16并同轮提交信息栏，速读/水波纹仍保留独立元数据。
+ * User2026-10-31 merges PR55: Pico ordinary/image turns use full-pixel GL16 with metadata; Fast BW/ripple retain deferred metadata.
  * 三键单击及中键长按可自定义，提供翻页/工具栏及首页/全屏/工具栏两套推荐；中键长按默认返回主页，阅读页不画右下角菜单图标。
  * 用户授权基础管理：长按书架先看完整详情，清进度与删文件分别确认；失败保留待重试记录，不自动回收其他书进度。
  * 用户修订：单本管理为书架弹窗；管理页用于批量操作。分页和排序保留勾选，筛选/应用搜索及重扫清除勾选。
@@ -1115,7 +1117,11 @@ static void draw_shelf_furniture(uint8_t* fb) {
             EpdRect acrylic = {20, top + 136, 644, 90};
             draw_shelf_guard(fb, acrylic, row);
         } else if (style == 6) {
-            draw_shelf_guard(fb, (EpdRect){20, top + 188, 644, 42}, row);
+            // 液态玻璃底板加深到与封面下沿重叠 72px：玻璃要在有内容的画面上才有可见的折射，
+            // 薄薄一条压在空白上等于没有折射。
+            // The liquid-glass base plate reaches 72px into the covers: refraction only shows over
+            // real content, and a thin strip over blank space reads as no refraction at all.
+            draw_shelf_guard(fb, (EpdRect){20, top + 142, 644, 88}, row);
         }
     }
 }
@@ -2109,7 +2115,8 @@ static void reader_background_scan(void) {
         // AppleDouble ._ files and other hidden metadata are not images.
         if (ent->d_name[0] == '.') continue;
         const char *ext = strrchr(ent->d_name, '.');
-        if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png"))) continue;
+        if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png") &&
+                     strcasecmp(ext, ".webp"))) continue;
         char path[288]; struct stat st;
         int n = snprintf(path, sizeof(path), "/sdcard/pictures/%s", ent->d_name);
         if (n < 0 || n >= (int)sizeof(path) || stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0) continue;
@@ -3260,7 +3267,7 @@ static uint8_t reader_sample_bilinear(const reader_image_t *image, int sx_fp, in
 // pure black/white dots for the interactive fast frames.
 static void draw_zoomed_image(uint8_t *fb, EpdRect band, int scale, int cx, int cy, bool bw) {
     const reader_image_t *image = reader_zoom_image();
-    if (!image) return;
+    if (!image || !image->gray) return;
     int base_w = 0, base_h = 0;
     reader_image_base_size(&base_w, &base_h);
     int w = (int)((int64_t)base_w * scale / READER_IMAGE_ZOOM_MIN);
@@ -3387,7 +3394,7 @@ static void zoom_bits_build(uint8_t *bits, EpdRect phys, EpdRect band, int iw, i
     const int64_t step_y = ((int64_t)ih << 16) / h;
     const int step = ZOOM_BITS_STEP;
     const reader_image_t *zoom_image = reader_zoom_image();
-    if (!zoom_image) return;
+    if (!zoom_image || !zoom_image->gray) return;
     for (int ly = ly0; ly < ly1; ly += step) {
         const int sy = (int)(((int64_t)(ly - top) * step_y) >> 16);
         if (sy < 0 || sy >= ih) continue;
@@ -3827,7 +3834,11 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
         s_reader_panel == READER_PANEL_NONE && !s_toolbar && !s_clear_confirm;
     const bool reader_entry=s_view==READING&&s_text&&s_presented_view!=(int)READING;
     const EpdRect body_area=reader_area();
-    const bool separate_metadata=s_view==READING&&s_text&&s_reader_fullscreen&&
+    const bool full_reader_frame=image_gray_refresh||(s_reader_turn_pending&&!s_water_turn_pending&&s_mode==MODE_GL16&&
+        !(app_settings_reader_turn_effect()==2&&s_view==READING&&s_presented_view==(int)READING&&
+          s_reader_panel==READER_PANEL_NONE&&!s_toolbar&&!s_clear_confirm&&
+          !book_layout_page_image_count(s_page)&&!app_settings_book_background_path()[0]));
+    const bool separate_metadata=!full_reader_frame&&s_view==READING&&s_text&&s_reader_fullscreen&&
         s_reader_panel==READER_PANEL_NONE&&!s_toolbar&&!s_clear_confirm&&!s_reader_cleanup&&
         !reader_entry&&redraw==APP_REDRAW_AREA&&s_area.x==body_area.x&&s_area.y==body_area.y&&
         s_area.width==body_area.width&&s_area.height==body_area.height;
@@ -3838,15 +3849,16 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
                                          (EpdRect){0,0,UI_LOCK_WIDTH,UI_LOCK_HEIGHT});
     else
     if (image_gray_refresh && redraw == APP_REDRAW_AREA && !s_reader_cleanup && s_presented_view == (int)READING) {
-        // 图文翻页只提交正文精确边界。/ Image turns commit only the exact body crop.
-        err=reader_present_crop(ctx->hl,display_reader_soft_turn_waveform(),MODE_GL16,reader_area(),false);
+        // Pico图文翻页用完整GL16一次提交正文与信息栏。/ Pico image turns present body and metadata in one full-pixel GL16 scan.
+        err=update_display_area_full_with(ctx->hl,display_reader_soft_turn_waveform(),MODE_GL16,
+                                         (EpdRect){0,0,UI_LOCK_WIDTH,UI_LOCK_HEIGHT});
     }
     else if (image_gray_refresh) {
         // 图片页整页重绘同样只推变化像素；KEY2 等显式全刷仍走完整 GC16。
         // Whole-page image repaints also drive changed pixels only; explicit full refreshes still run
         // the complete GC16.
         err = redraw != APP_REDRAW_FULL && !s_reader_cleanup
-            ? update_display_area_diff_with(ctx->hl, display_reader_soft_turn_waveform(), MODE_GL16,
+            ? update_display_area_full_with(ctx->hl, display_reader_soft_turn_waveform(), MODE_GL16,
                                             (EpdRect){0,0,UI_LOCK_WIDTH,UI_LOCK_HEIGHT})
             : update_display_with(ctx->hl, &E0470_FULL_WAVEFORM, MODE_GC16);
     }
@@ -3877,22 +3889,11 @@ static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
               s_reader_panel == READER_PANEL_NONE && !s_toolbar && !s_clear_confirm &&
               !book_layout_page_image_count(s_page) && !app_settings_book_background_path()[0]
                 ? update_display_text_turn(ctx->hl, turn_area, E0470_TURN_RTL)
-            // 普通翻页继续原灰阶差分；速读仅进入已验证的纯文字出口。
-            // Ordinary keeps its gray differences; Fast BW enters only the qualified pure-text outlet.
-            // 普通翻页与全屏阅读都只驱动变化像素；设置面板等局部绘制保留原路径。
-            // Ordinary turns and full-screen reading drive changed pixels only; other local UI keeps its path.
-            : (s_reader_fullscreen || s_reader_turn_pending) && s_mode == MODE_GL16
-                // 普通翻页用柔和差分：厂商 GL16 原序、中灰对角线保持，末尾四相同相整理对比度——
-                // 整屏目标白的像素擦白、目标黑的像素压黑，白底干净且黑字不发灰。
-                // Ordinary turns use soft differences: vendor GL16 order with equal midgrays
-                // held, then four contrast phases that whiten every white target and darken
-                // every black target across the panel, keeping blanks clean and text inky.
-                ? reader_present_crop(ctx->hl,display_reader_soft_turn_waveform(),s_mode,turn_area,false)
-                // 其余局部正文刷新（图片页之后、换章首帧、灰阶回落）也只驱动变化像素。
-                // Other local body updates (after an image page, the first frame of a new chapter,
-                // gray fallbacks) also drive changed pixels only.
-                : separate_metadata?reader_present_crop(ctx->hl,
-                    s_mode==MODE_DU?&E0470_FOLLOW_WAVEFORM:display_reader_soft_turn_waveform(),s_mode,s_area,false)
+            // 普通Pico翻页使用PR55全像素GL16；局部控件继续真实差分。
+            // Ordinary Pico turns use PR55 full-pixel GL16; local controls retain true differences.
+            : s_reader_turn_pending && s_mode == MODE_GL16
+                ? update_display_area_full_with(ctx->hl,display_reader_soft_turn_waveform(),s_mode,
+                                                (EpdRect){0,0,UI_LOCK_WIDTH,UI_LOCK_HEIGHT})
                 : update_display_area_diff_with(ctx->hl,
                     s_mode == MODE_DU ? &E0470_FOLLOW_WAVEFORM : display_reader_soft_turn_waveform(),
                     s_mode, s_area);
@@ -4077,6 +4078,21 @@ static void release_page_images(void) {
     free(s_page_images); s_page_images = NULL; s_page_image_count = 0;
     s_page_images_for = SIZE_MAX;
 }
+// 渐进式插图要 1-3 MB 系数缓冲：解码前把本页用不到的整页预取、书架封面和字形缓存还回去，
+// 解完再让各自的按需路径重建。只在 PSRAM 紧张时动手，纯文字页不受影响。
+// Progressive illustrations need 1-3 MB of coefficient buffers: before decoding, give back the
+// whole-page prefetch, shelf covers and glyph cache that this page does not need; each rebuilds on
+// demand afterwards. Only when PSRAM is tight, so plain text pages keep their caches.
+static void release_image_headroom(void) {
+    if (heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) >= 3u * 1024u * 1024u) return;
+    lock_draw();
+    invalidate_prep();
+    free(s_next_fb);
+    s_next_fb = NULL;
+    unlock_draw();
+    invalidate_covers();
+    (void)ttf_font_cache_clear_all();
+}
 static void prepare_inline_image(void) {
     if (app_settings_reader_hide_images()) { release_page_images(); return; }
     uint32_t generation = book_layout_generation();
@@ -4092,6 +4108,7 @@ static void prepare_inline_image(void) {
     // continue; record the outcome instead of guessing.
     int count = reader_image_slots(s_page);
     if (changed_layout_or_image || count > 0) invalidate_prep();
+    if (count > 0) release_image_headroom();
     size_t psram_before = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!count || count > (int)HTML_TEXT_MAX_BLOCKS) {
         ESP_LOGI(TAG, "inline page %u: %d image slots", (unsigned)s_page, count);
@@ -6924,7 +6941,7 @@ static void zoom_blit_bits(uint8_t *fb, const uint8_t *bits, EpdRect phys) {
 }
 static app_redraw_t zoom_frame(app_ctx_t* ctx) {
     const reader_image_t *image = reader_zoom_image();
-    if (!image) { reader_zoom_reset(); return APP_REDRAW_NONE; }
+    if (!image || !image->gray) { reader_zoom_reset(); return APP_REDRAW_NONE; }
     s_image_zoom_bw = true;
     s_image_zoom_draw_ms = ctx->now_ms;
     EpdRect band = book_layout_image_rect();
@@ -6943,8 +6960,10 @@ static app_redraw_t zoom_frame(app_ctx_t* ctx) {
         // Without memory for the pattern, fall back to the older 4bpp repaint.
         ui_fill_rect_fast(band, 0xFF, ctx->fb);
         draw_zoomed_image(ctx->fb, band, s_image_zoom, s_image_zoom_cx, s_image_zoom_cy, true);
+        rails_keepalive();
+        epd_poweron();
         guard_draw_result(ctx->hl, update_display_area_diff_with(
-            ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, reader_area()));
+            ctx->hl, display_main_gray_waveform(), MODE_GL16, band));
         return APP_REDRAW_DONE;
     }
     int64_t t_build = esp_timer_get_time();
@@ -6954,11 +6973,15 @@ static app_redraw_t zoom_frame(app_ctx_t* ctx) {
     zoom_blit_bits(ctx->fb, s_zoom_bits, phys);
     rails_keepalive();
     epd_poweron();
-    // 跟随 DU：一次波形把整幅黑白推完（8 帧短波形），画面完整可见。
-    // Follow DU: one waveform pushes the whole black/white frame (eight short frames), so the
-    // picture is fully visible.
+    // 跟手帧用整区 GL16：跟随 DU 只在小块触摸笔迹上长期验证过，整块插图放大走它曾把刷新
+    // 队列卡死并触发看门狗；GL16 与正文插图刷新同一条稳定路径。黑/白点阵本身就是 16 级里
+    // 的两端，GL16 显示结果一致。
+    // Interactive frames use a band GL16 update: follow-DU has only been proven on small touch-ink
+    // patches, and it once wedged the refresh queue (watchdog reset) on a whole illustration band.
+    // GL16 is the same path the reader's own illustration refresh uses and renders black/white
+    // dots faithfully since they are the two ends of the 16 levels.
     guard_draw_result(ctx->hl, update_display_area_diff_with(
-        ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, band));
+        ctx->hl, display_main_gray_waveform(), MODE_GL16, band));
     int64_t t_done = esp_timer_get_time();
     ESP_LOGI(TAG, "zoom %d build=%.1f blit+du=%.1f ms",
              s_image_zoom, (t_build_end - t_build) / 1000.0, (t_done - t_build_end) / 1000.0);

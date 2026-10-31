@@ -1254,7 +1254,11 @@ static void draw_shelf_furniture(uint8_t* fb) {
             EpdRect acrylic = {20, top + 136, 644, 90};
             draw_shelf_guard(fb, acrylic, row);
         } else if (style == 6) {
-            draw_shelf_guard(fb, (EpdRect){20, top + 188, 644, 42}, row);
+            // 液态玻璃底板加深到与封面下沿重叠 72px：玻璃要在有内容的画面上才有可见的折射，
+            // 薄薄一条压在空白上等于没有折射。
+            // The liquid-glass base plate reaches 72px into the covers: refraction only shows over
+            // real content, and a thin strip over blank space reads as no refraction at all.
+            draw_shelf_guard(fb, (EpdRect){20, top + 142, 644, 88}, row);
         }
     }
 }
@@ -2294,7 +2298,8 @@ static void reader_background_scan(void) {
         // AppleDouble ._ files and other hidden metadata are not images.
         if (ent->d_name[0] == '.') continue;
         const char *ext = strrchr(ent->d_name, '.');
-        if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png"))) continue;
+        if (!ext || (strcasecmp(ext, ".jpg") && strcasecmp(ext, ".jpeg") && strcasecmp(ext, ".png") &&
+                     strcasecmp(ext, ".webp"))) continue;
         char path[288]; struct stat st;
         int n = snprintf(path, sizeof(path), "/sdcard/pictures/%s", ent->d_name);
         if (n < 0 || n >= (int)sizeof(path) || stat(path, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0) continue;
@@ -3523,7 +3528,7 @@ static uint8_t reader_sample_bilinear(const reader_image_t *image, int sx_fp, in
 // pure black/white dots for the interactive fast frames.
 static void draw_zoomed_image(uint8_t *fb, EpdRect band, int scale, int cx, int cy, bool bw) {
     const reader_image_t *image = reader_zoom_image();
-    if (!image) return;
+    if (!image || !image->gray) return;
     int base_w = 0, base_h = 0;
     reader_image_base_size(&base_w, &base_h);
     int w = (int)((int64_t)base_w * scale / READER_IMAGE_ZOOM_MIN);
@@ -3650,7 +3655,7 @@ static void zoom_bits_build(uint8_t *bits, EpdRect phys, EpdRect band, int iw, i
     const int64_t step_y = ((int64_t)ih << 16) / h;
     const int step = ZOOM_BITS_STEP;
     const reader_image_t *zoom_image = reader_zoom_image();
-    if (!zoom_image) return;
+    if (!zoom_image || !zoom_image->gray) return;
     for (int ly = ly0; ly < ly1; ly += step) {
         const int sy = (int)(((int64_t)(ly - top) * step_y) >> 16);
         if (sy < 0 || sy >= ih) continue;
@@ -7661,7 +7666,7 @@ static void zoom_blit_bits(uint8_t *fb, const uint8_t *bits, EpdRect phys) {
 }
 static app_redraw_t zoom_frame(app_ctx_t* ctx) {
     const reader_image_t *image = reader_zoom_image();
-    if (!image) { reader_zoom_reset(); return APP_REDRAW_NONE; }
+    if (!image || !image->gray) { reader_zoom_reset(); return APP_REDRAW_NONE; }
     s_image_zoom_bw = true;
     s_image_zoom_draw_ms = ctx->now_ms;
     EpdRect band = book_layout_image_rect();
@@ -7680,8 +7685,10 @@ static app_redraw_t zoom_frame(app_ctx_t* ctx) {
         // Without memory for the pattern, fall back to the older 4bpp repaint.
         ui_fill_rect_fast(band, 0xFF, ctx->fb);
         draw_zoomed_image(ctx->fb, band, s_image_zoom, s_image_zoom_cx, s_image_zoom_cy, true);
+        rails_keepalive();
+        epd_poweron();
         guard_draw_result(ctx->hl, update_display_area_diff_with(
-            ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, reader_area()));
+            ctx->hl, display_main_gray_waveform(), MODE_GL16, band));
         return APP_REDRAW_DONE;
     }
     int64_t t_build = esp_timer_get_time();
@@ -7691,11 +7698,15 @@ static app_redraw_t zoom_frame(app_ctx_t* ctx) {
     zoom_blit_bits(ctx->fb, s_zoom_bits, phys);
     rails_keepalive();
     epd_poweron();
-    // 跟随 DU：一次波形把整幅黑白推完（8 帧短波形），画面完整可见。
-    // Follow DU: one waveform pushes the whole black/white frame (eight short frames), so the
-    // picture is fully visible.
+    // 跟手帧用整区 GL16：跟随 DU 只在小块触摸笔迹上长期验证过，整块插图放大走它曾把刷新
+    // 队列卡死并触发看门狗；GL16 与正文插图刷新同一条稳定路径。黑/白点阵本身就是 16 级里
+    // 的两端，GL16 显示结果一致。
+    // Interactive frames use a band GL16 update: follow-DU has only been proven on small touch-ink
+    // patches, and it once wedged the refresh queue (watchdog reset) on a whole illustration band.
+    // GL16 is the same path the reader's own illustration refresh uses and renders black/white
+    // dots faithfully since they are the two ends of the 16 levels.
     guard_draw_result(ctx->hl, update_display_area_diff_with(
-        ctx->hl, &E0470_FOLLOW_WAVEFORM, MODE_DU, band));
+        ctx->hl, display_main_gray_waveform(), MODE_GL16, band));
     int64_t t_done = esp_timer_get_time();
     ESP_LOGI(TAG, "zoom %d build=%.1f blit+du=%.1f ms",
              s_image_zoom, (t_build_end - t_build) / 1000.0, (t_done - t_build_end) / 1000.0);

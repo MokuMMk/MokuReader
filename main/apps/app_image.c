@@ -102,7 +102,7 @@ static bool image_name(const char *name, bool *png) {
 #if KIIKO_BOARD_METALIO47
     if(s_lock_mode==IMAGE_LOCK_BOOKMARK)return *png;
 #endif
-    return *png || !strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg");
+    return *png || !strcasecmp(ext, ".jpg") || !strcasecmp(ext, ".jpeg") || !strcasecmp(ext, ".webp");
 }
 
 static void scan_dir(const char *root) {

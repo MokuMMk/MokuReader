@@ -67,28 +67,11 @@ const EpdWaveform* display_reader_text_waveform(void) {
     return &s_waveform;
 }
 
-// 普通翻页的柔和差分：保留厂商 GL16 原序（右对齐、前导保持，比文字转页表更柔），
-// 等灰全部保持（未变化像素完全不驱动，黑不会被擦白、灰也不会被反复补白）。
-// 只给“真正变成白”的像素补四相擦白，清掉上一页留下的灰底与灰字；空白区的白度交给
-// 周期 GC16 和手动全刷维持——每页整屏白推会把黑字冲淡（CrossMux 同样只推变化像素，
-// 靠 FULL/GC16 定期把面板拉回黑白两端）。
-// 顺序：这四相插在厂商末尾三相“定稿保持”之前，最后的推屏动作仍然是保持，颗粒才落得定。
-// Soft ordinary differences: keep the vendor GL16 order (right aligned, leading holds --
-// softer than the text-turn table) and hold every equal pair, so unchanged pixels are not
-// driven at all: black is never erased white and grays are never re-whitened. Four whites are
-// pushed only for pixels that actually turn white, clearing the previous page's gray floor and
-// ghost; keeping blanks white is left to the periodic GC16 and manual full refresh (CrossMux
-// likewise drives only changed pixels differentially and relies on FULL/GC16 to reset the
-// panel), because a whole-panel white push every turn dilutes the black ink.
-// Order matters: the four phases are inserted BEFORE the vendor's three trailing settle
-// holds so the scan still ends on a hold and the particles settle.
 #define READER_SOFT_TURN_SETTLE_EXTRA 4
 #define READER_SOFT_TURN_HOLD_PHASES 3
-#define READER_SOFT_TURN_DRIVE (E0470_GL16_FRAMES - READER_SOFT_TURN_HOLD_PHASES)
-#define READER_SOFT_TURN_PHASES (E0470_GL16_FRAMES + READER_SOFT_TURN_SETTLE_EXTRA)
-static uint8_t s_soft_data[READER_SOFT_TURN_PHASES][16][4];
-static const EpdWaveformPhases s_soft_phases = {
-    READER_SOFT_TURN_PHASES, (const uint8_t*)s_soft_data, NULL
+static uint8_t s_soft_data[64][16][4];
+static EpdWaveformPhases s_soft_phases = {
+    48, (const uint8_t*)s_soft_data, NULL
 };
 static const EpdWaveformPhases* s_soft_ranges[] = {&s_soft_phases};
 static const EpdWaveformMode s_soft_mode = {MODE_GL16, 1, s_soft_ranges};
@@ -105,35 +88,44 @@ static void soft_set_action(int phase, int to, int from, int action) {
     );
 }
 
+// 官方阅读翻页时序：整块全像素走厂商 GL16（右对齐、擦除+饱和+灰阶尾+定稿保持）。
+// 改动：等值“黑→黑”去掉擦白相只保留压黑相；并在厂商 3 相定稿保持之前插入 4 相
+// “全屏擦白”（所有目标为白的像素，含本来也白的空白区），翻页后白底擦得更狠；
+// 其余所有迁移（灰阶、变黑、变白）完全按厂商原序列。
+// Official reader turn timing: full-pixel vendor GL16. Equal black-on-black drops the erase
+// phases and keeps the darken phases, and four extra white phases are inserted before the
+// vendor's three settle holds so every white target (including already-white blanks) is
+// erased harder after a page turn. All other transitions stay vendor-original.
 const EpdWaveform* display_reader_soft_turn_waveform(void) {
     if (s_soft_ready) return &s_soft_waveform;
     const EpdWaveformPhases* gl = e0470_waveform_phases(&E0470_WAVEFORM, MODE_GL16);
-    if (!gl || !gl->luts || gl->phases != E0470_GL16_FRAMES || gl->phase_times)
-        return &E0470_WAVEFORM;
-    const int drive = READER_SOFT_TURN_DRIVE;
-    // 厂商前段原样照搬，再把末尾三相保持挪到最后，四相擦白插在中间。
-    // Copy the vendor front as-is, move its trailing holds to the end and insert the four
-    // whitening phases between them.
-    memcpy(s_soft_data, gl->luts, (size_t)E0470_GL16_FRAMES * 16 * 4);
-    // 等灰全保持：黑→黑、白→白、灰→灰都不驱动。
-    // Hold every equal pair: black->black, white->white and gray->gray never drive.
-    for (int f = 0; f < E0470_GL16_FRAMES; ++f)
-        for (int v = 0; v < 16; ++v)
-            soft_set_action(f, v, v, 0);
-    memmove(s_soft_data + drive + READER_SOFT_TURN_SETTLE_EXTRA, s_soft_data + drive,
-            (size_t)READER_SOFT_TURN_HOLD_PHASES * 16 * 4);
-    // 只为“变成白”的像素补擦白，黑与中灰不加推动。
-    // Push white only for pixels that actually turn white; black and midgrays get none.
-    for (int i = 0; i < READER_SOFT_TURN_SETTLE_EXTRA; ++i)
-        for (int to = 0; to < 16; ++to)
+    if (!gl || !gl->luts || gl->phase_times || gl->phases + 8 > 64) return &E0470_WAVEFORM;
+    int hold = 0;
+    while (hold < gl->phases) {
+        const int f = gl->phases - 1 - hold;
+        int nonzero = 0;
+        for (int to = 0; to < 16 && !nonzero; ++to)
             for (int from = 0; from < 16; ++from)
-                soft_set_action(drive + i, to, from,
-                                to == 15 && from != 15 ? 2 : 0);
+                if (e0470_phase_action(gl, f, to, from)) { nonzero = 1; break; }
+        if (nonzero) break;
+        ++hold;
+    }
+    if (hold < 1) return &E0470_WAVEFORM;
+    const int drive = gl->phases - hold;
+    const int extra = 4;
+    memcpy(s_soft_data, gl->luts, (size_t)drive * 16 * 4);
+    memset(s_soft_data + drive, 0, (size_t)extra * 16 * 4);
+    memcpy(s_soft_data + drive + extra, (const uint8_t*)gl->luts + (size_t)drive * 16 * 4,
+           (size_t)hold * 16 * 4);
+    for (int f = 0; f < gl->phases; ++f)
+        if (e0470_phase_action(gl, f, 0, 0) == 2) soft_set_action(f, 0, 0, 0);
+    for (int i = 0; i < extra; ++i)
+        for (int from = 0; from < 16; ++from) soft_set_action(drive + i, 15, from, 2);
+    s_soft_phases = (EpdWaveformPhases){gl->phases + extra, (const uint8_t*)s_soft_data, NULL};
     s_soft_waveform.temp_intervals = E0470_WAVEFORM.temp_intervals;
     s_soft_ready = true;
     return &s_soft_waveform;
 }
-
 
 // 复用Pico原厂完整DU，含末尾保持相；不改表、不调脉宽或冒用其他板型的扫描。
 // Reuse Pico's complete vendor DU including trailing holds; retain tables, pulse widths and board scan timing.

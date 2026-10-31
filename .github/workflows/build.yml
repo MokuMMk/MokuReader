@@ -112,6 +112,9 @@ jobs:
           python tools/build_firmware.py --board "${{ matrix.board }}" \
             --idf-${{ matrix.board }} "$IDF_PATH" --python "$(command -v python)" \
             --output build/boards "${extra[@]}"
+          if [ "${{ matrix.board }}" = pico ]; then
+            python tools/lowzag_host_test.py --component build/boards/pico/source/managed_components/defensiblelogic__lowzag
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ matrix.board }}
@@ -163,6 +166,7 @@ jobs:
           python3 tools/liquid_shelf_style_host_test.py
           python3 tools/shelf_guard_cache_host_test.py
           python3 tools/management_layout_host_test.py
+          python3 tools/webp_host_test.py
           python3 tools/reader_metadata_host_test.py
           python3 tools/setup_state_host_test.py
           python3 tools/setup_navigation_host_test.py

@@ -76,6 +76,9 @@ home=root/'main/apps/app_dashboard.c'
 unit+='typedef struct{char path[288],title[256],author[128];}home_book_t;\n'+function('copy_title',home)+'\n'+function('title_for',home)+'\n'
 unit+=r'''
 int main(void){
+ assert(supported(1,"picture.webp")&&supported(1,"picture.WEBP"));
+ assert(!supported(0,"picture.webp")&&!supported(2,"picture.webp"));
+ assert(!supported(1,"._picture.webp")&&!supported(1,".picture.webp"));
  char folder[]="/tmp/kn-XXXXXX";assert(mkdtemp(folder));strcpy(test_root,folder);
  const char*names[]={"沉睡的人 (乔治·佩雷克 Georges Perec) (z-library.sk, 1lib.sk, z-lib.sk).epub",
  "活山 ([英]娜恩·谢泼德 [[英]娜恩·谢泼德]) (z-library.sk, 1lib.sk, z-lib.sk).epub",

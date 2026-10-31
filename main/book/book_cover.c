@@ -18,6 +18,14 @@
 #include <strings.h>
 #include <sys/stat.h>
 #include "esp_heap_caps.h"
+#include "read_pico_webp.h"
+#if KIIKO_BOARD_METALIO47
+#else
+#if defined(ESP_PLATFORM) || defined(KIIKO_LOWZAG_HOST_TEST)
+#include "lowzag.h"
+#define KIIKO_USE_LOWZAG 1
+#endif
+#endif
 #include "jpeg_decoder.h"
 #include "JPEGDEC.h"
 #include "png.h"
@@ -227,6 +235,210 @@ static bool jpegdec_gray(const uint8_t *data, size_t size, unsigned frame_width,
     return ok;
 }
 
+// RGB565 平面 → 目标灰度：长边铺满、居中裁剪、双线性；基线 JPEG 与 WebP 共用。
+// RGB565 plane to target gray: fill the longer side, centre-crop, bilinear; shared by baseline
+// JPEG and WebP.
+static bool rgb565_plane_gray(const uint8_t *pixels, unsigned source_width, unsigned source_height,
+                              unsigned out_width, unsigned out_height, uint8_t *out) {
+    if (!pixels || !source_width || !source_height) return false;
+    const book_crop_t crop = book_cover_crop(source_width, source_height, out_width, out_height);
+    scale_step_t *xmap = scale_map(out_width, crop.width);
+    scale_step_t *ymap = scale_map(out_height, crop.height);
+    if (!xmap || !ymap) { free(xmap); free(ymap); return false; }
+    for (unsigned y = 0; y < out_height; ++y) {
+        const int sy = ymap[y].at, fy = ymap[y].frac;
+        const int sy1 = scale_next(sy, crop.height);
+        const uint8_t *r0 = pixels + (size_t)(crop.y + (unsigned)sy) * source_width * 2;
+        const uint8_t *r1 = pixels + (size_t)(crop.y + (unsigned)sy1) * source_width * 2;
+        for (unsigned x = 0; x < out_width; ++x) {
+            const int sx = xmap[x].at, fx = xmap[x].frac;
+            const int sx1 = scale_next(sx, crop.width);
+            out[y * out_width + x] = bilinear4(
+                rgb565_gray(r0, crop.x + (unsigned)sx), rgb565_gray(r0, crop.x + (unsigned)sx1),
+                rgb565_gray(r1, crop.x + (unsigned)sx), rgb565_gray(r1, crop.x + (unsigned)sx1),
+                fx, fy);
+        }
+        decode_yield(y);
+    }
+    free(xmap);
+    free(ymap);
+    return true;
+}
+
+#ifdef KIIKO_USE_LOWZAG
+/* ---- 渐进式 JPEG（lowzag）/ Progressive JPEG via lowzag ---- */
+
+typedef struct { const uint8_t *data; size_t size, pos; } lowzag_mem_input_t;
+static int lowzag_mem_read(void *ctx, uint8_t *buf, size_t len) {
+    lowzag_mem_input_t *input = (lowzag_mem_input_t *)ctx;
+    if (!input || !buf) return -1;
+    if (input->pos >= input->size) return 0;
+    size_t room = input->size - input->pos;
+    if (len > room) len = room;
+    memcpy(buf, input->data + input->pos, len);
+    input->pos += len;
+    return (int)len;
+}
+
+typedef struct {
+    uint8_t *rows[2];            // 两行缩小后的亮度环 / ring of two reduced-luma rows
+    unsigned width;              // 缩小图宽度 / reduced width
+    const scale_step_t *xmap, *ymap;
+    unsigned crop_x, crop_y, crop_w, crop_h;
+    unsigned out_w, out_h;
+    uint8_t *out;
+    unsigned next_row;
+} lowzag_stream_t;
+
+// lowzag 逐行交回 RGB；这里只留亮度，并在两行都到位时直接把输出行画进最终位图，
+// 不再为整幅缩小图分配一块平面（设备上那 300-500 KB 正是选档的瓶颈）。
+// lowzag returns RGB rows; keep luminance and paint each output row as soon as both of its
+// reduced rows are available, instead of holding a whole reduced plane (that 300-500 KB plane is
+// exactly what forced a coarser scale on the device).
+static void lowzag_row_stream(void *ctx, int y, int w, const uint8_t *rgb) {
+    lowzag_stream_t *s = (lowzag_stream_t *)ctx;
+    if (!s || !s->out || !rgb || w <= 0 || y < 0) return;
+    const unsigned row = (unsigned)y;
+    if (row < s->crop_y || row >= s->crop_y + s->crop_h) return;
+    const unsigned local = row - s->crop_y;
+    uint8_t *row_data = s->rows[local & 1u];
+    const unsigned width = (unsigned)w < s->width ? (unsigned)w : s->width;
+    for (unsigned x = 0; x < width; ++x)
+        row_data[x] = luminance(rgb[(size_t)x * 3], rgb[(size_t)x * 3 + 1], rgb[(size_t)x * 3 + 2]);
+    // 输出行按源行顺序推进：某输出行的两行都到位就画。
+    // Emit output rows in source order once both of their reduced rows have arrived.
+    while (s->next_row < s->out_h) {
+        const unsigned j = s->next_row;
+        const int sy = s->ymap[j].at;
+        const int sy1 = scale_next(sy, s->crop_h);
+        if ((unsigned)sy1 != local) break;
+        const int fy = s->ymap[j].frac;
+        const uint8_t *row_a = (unsigned)sy == local ? row_data : s->rows[(local - 1u) & 1u];
+        uint8_t *dst = s->out + (size_t)j * s->out_w;
+        for (unsigned x = 0; x < s->out_w; ++x) {
+            const int sx = s->xmap[x].at, fx = s->xmap[x].frac;
+            const int sx1 = scale_next(sx, s->crop_w);
+            dst[x] = bilinear4(row_a[s->crop_x + (unsigned)sx], row_a[s->crop_x + (unsigned)sx1],
+                               row_data[s->crop_x + (unsigned)sx], row_data[s->crop_x + (unsigned)sx1],
+                               fx, fy);
+        }
+        ++s->next_row;
+    }
+}
+
+static void *lowzag_psram_alloc(void *ctx, size_t size) {
+    (void)ctx;
+    return heap_caps_malloc(size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+}
+static void lowzag_psram_free(void *ctx, void *ptr) {
+    (void)ctx;
+    heap_caps_free(ptr);
+}
+
+// 渐进式 JPEG：lowzag 在 1/1..1/8 里按“够清晰、装得下”两件事选档，避免 JPEGDEC 的固定 1/8。
+// 选档顺序是 1/1 → 1/8（先清晰后省内存）：输出不小于目标 3/4 才接受，同时不超过目标 3 倍，
+// 免得为 176×240 封面去解整幅 1200×1600。
+// Progressive JPEG: lowzag picks among 1/1..1/8 for "sharp enough and it fits" instead of
+// JPEGDEC's fixed 1/8. The ladder runs 1/1 -> 1/8 (quality first): an output at least 3/4 of the
+// target is accepted, and at most 3x the target so a 176x240 cover does not decode a whole frame.
+static bool lowzag_gray(const uint8_t *data, size_t size, unsigned out_width, unsigned out_height,
+                        uint8_t *out) {
+    if (!data || !size || !out || !out_width || !out_height) return false;
+    int source_w = 0, source_h = 0;
+    if (lowzag_probe(data, size, &source_w, &source_h) != LOWZAG_OK) return false;
+    if (source_w <= 0 || source_h <= 0) return false;
+    const size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const size_t reserve = 64u * 1024u;  // 页面位图与缓存的余量 / headroom for page bitmaps and caches
+    if (free_psram <= reserve + 512u * 1024u) return false;
+
+    lowzag_cfg_t cfg = LOWZAG_CFG_INIT;
+    lowzag_mem_input_t input = {data, size, 0};
+    cfg.read = lowzag_mem_read;
+    cfg.read_ctx = &input;
+    cfg.alloc = lowzag_psram_alloc;
+    cfg.alloc_ctx = NULL;
+    cfg.free = lowzag_psram_free;
+
+    // 目标下界：不小于显示尺寸的 3/4；上界：不超过 3 倍，避免白算。
+    // Lower bound: at least 3/4 of the display size; upper bound: at most 3x it, so no wasted work.
+    const int64_t min_w = ((int64_t)out_width * 3 + 3) / 4;
+    const int64_t min_h = ((int64_t)out_height * 3 + 3) / 4;
+    const int64_t max_w = (int64_t)out_width * 3;
+    const int64_t max_h = (int64_t)out_height * 3;
+
+    int chosen_scale = 0, chosen_w = 0, chosen_h = 0;
+    for (int pass = 0; pass < 2 && !chosen_scale; ++pass) {
+        // pass 0 要清晰度；pass 1 只要求装得下，宁可粗一点也不留 1/8 兜底。
+        // Pass 0 demands sharpness; pass 1 only demands it fits, rather than dropping to 1/8.
+        for (int d = 1; d <= 8; d <<= 1) {
+            const int ow = (source_w + d - 1) / d;
+            const int oh = (source_h + d - 1) / d;
+            if (pass == 0 && ((int64_t)ow < min_w || (int64_t)oh < min_h ||
+                              (int64_t)ow > max_w || (int64_t)oh > max_h)) continue;
+            // 输出平面改成逐行直写，不再占一块比系数还大的中间图；预算几乎全给 lowzag。
+            // The output plane is streamed row by row now, so nearly the whole budget goes to
+            // lowzag instead of to a middle plane larger than the coefficients.
+            cfg.mem_limit = free_psram - reserve;
+            cfg.force_scale = d;
+            lowzag_estimate_t est = LOWZAG_ESTIMATE_INIT;
+            if (lowzag_estimate(&cfg, data, size, &est) != LOWZAG_OK) continue;
+            if (!est.out_w || !est.out_h) continue;
+            if (est.alloc_bytes + reserve > free_psram) continue;
+            chosen_scale = d;
+            chosen_w = est.out_w;
+            chosen_h = est.out_h;
+            break;
+        }
+    }
+    if (!chosen_scale) return false;
+
+    // 缩小图 → 显示尺寸的裁剪与双线性映射，边收边画。
+    // Crop and bilinear mapping from the reduced image to the display size, painted as rows arrive.
+    const book_crop_t crop = book_cover_crop((unsigned)chosen_w, (unsigned)chosen_h,
+                                             out_width, out_height);
+    if (!crop.width || !crop.height || crop.x + crop.width > (unsigned)chosen_w ||
+        crop.y + crop.height > (unsigned)chosen_h) return false;
+    scale_step_t *xmap = scale_map(out_width, crop.width);
+    scale_step_t *ymap = scale_map(out_height, crop.height);
+    if (!xmap || !ymap) { free(xmap); free(ymap); return false; }
+    uint8_t *rows[2] = {cover_alloc((size_t)chosen_w), cover_alloc((size_t)chosen_w)};
+    if (!rows[0] || !rows[1]) {
+        free(rows[0]);
+        free(rows[1]);
+        free(xmap);
+        free(ymap);
+        return false;
+    }
+    lowzag_stream_t stream = {
+        .rows = {rows[0], rows[1]},
+        .width = (unsigned)chosen_w,
+        .xmap = xmap,
+        .ymap = ymap,
+        .crop_x = crop.x,
+        .crop_y = crop.y,
+        .crop_w = crop.width,
+        .crop_h = crop.height,
+        .out_w = out_width,
+        .out_h = out_height,
+        .out = out,
+    };
+    cfg.force_scale = chosen_scale;
+    cfg.row = lowzag_row_stream;
+    cfg.row_ctx = &stream;
+    input.pos = 0;
+
+    lowzag_info_t info = LOWZAG_INFO_INIT;
+    const lowzag_err_t err = lowzag_decode(&cfg, &info);
+    const bool ok = err == LOWZAG_OK && stream.next_row == out_height;
+    free(rows[0]);
+    free(rows[1]);
+    free(xmap);
+    free(ymap);
+    return ok;
+}
+
+#endif
+
 static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
                       unsigned out_height, uint8_t *out) {
 #if KIIKO_BOARD_METALIO47
@@ -237,8 +449,12 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
     if (size > UINT32_MAX) return false;
     uint8_t sof = 0;
     unsigned frame_width = 0, frame_height = 0;
-    if (book_jpeg_frame(data, size, &sof, &frame_width, &frame_height) && sof == 0xC2)
+    if (book_jpeg_frame(data, size, &sof, &frame_width, &frame_height) && sof == 0xC2) {
+#ifdef KIIKO_USE_LOWZAG
+        if(lowzag_gray(data,size,out_width,out_height,out))return true;
+#endif
         return jpegdec_gray(data, size, frame_width, frame_height, out_width, out_height, out);
+    }
     esp_jpeg_image_cfg_t cfg = { .indata = (uint8_t *)data, .indata_size = (uint32_t)size,
                                  .out_format = JPEG_IMAGE_FORMAT_RGB565 };
     esp_jpeg_image_output_t info = {0};
@@ -253,37 +469,28 @@ static bool jpeg_gray(const uint8_t *data, size_t size, unsigned out_width,
         if (!pixels) continue;
         cfg.outbuf = pixels;
         cfg.outbuf_size = info.output_len;
-        if (esp_jpeg_decode(&cfg, &info) == ESP_OK) {
-            // 长边铺满再居中裁剪，长宽比不同也不拉伸。
-            // Fill by the longer side and centre-crop, so a different aspect ratio is not stretched.
-            const book_crop_t crop = book_cover_crop(info.width, info.height, out_width, out_height);
-            scale_step_t *xmap = scale_map(out_width, crop.width);
-            scale_step_t *ymap = scale_map(out_height, crop.height);
-            if (xmap && ymap) {
-                for (unsigned y = 0; y < out_height; ++y) {
-                    const int sy = ymap[y].at, fy = ymap[y].frac;
-                    const int sy1 = scale_next(sy, crop.height);
-                    const uint8_t *r0 = pixels + (size_t)(crop.y + (unsigned)sy) * info.width * 2;
-                    const uint8_t *r1 = pixels + (size_t)(crop.y + (unsigned)sy1) * info.width * 2;
-                    for (unsigned x = 0; x < out_width; ++x) {
-                        const int sx = xmap[x].at, fx = xmap[x].frac;
-                        const int sx1 = scale_next(sx, crop.width);
-                        out[y * out_width + x] = bilinear4(
-                            rgb565_gray(r0, crop.x + (unsigned)sx), rgb565_gray(r0, crop.x + (unsigned)sx1),
-                            rgb565_gray(r1, crop.x + (unsigned)sx), rgb565_gray(r1, crop.x + (unsigned)sx1),
-                            fx, fy);
-                    }
-                    decode_yield(y);
-                }
-                decoded = true;
-            }
-            free(xmap);
-            free(ymap);
-        }
+        if (esp_jpeg_decode(&cfg, &info) == ESP_OK)
+            decoded = rgb565_plane_gray(pixels, info.width, info.height, out_width, out_height, out);
         free(pixels);
         if (decoded) break;
     }
     return decoded;
+}
+
+// WebP：先整幅/限幅解成 RGB565 平面，再走与基线 JPEG 相同的裁剪缩放。
+// WebP: decode a (size-capped) RGB565 plane, then reuse the same crop/scale as baseline JPEG.
+static bool webp_gray(const uint8_t *data, size_t size, unsigned out_width, unsigned out_height,
+                      uint8_t *out) {
+    // 与 jpeg_gray 同一预算：封面尺寸 3 MiB，其余 6 MiB；RGB565 两字节一像素。
+    // Same budget as jpeg_gray: 3 MiB for cover-sized output, 6 MiB otherwise; two bytes per pixel.
+    const size_t limit = out_width <= BOOK_COVER_W && out_height <= BOOK_COVER_H
+        ? 3u * 1024u * 1024u : 6u * 1024u * 1024u;
+    uint8_t *plane = NULL;
+    unsigned source_width = 0, source_height = 0;
+    if (!read_pico_webp_rgb565(data, size, limit / 2, &plane, &source_width, &source_height)) return false;
+    const bool ok = rgb565_plane_gray(plane, source_width, source_height, out_width, out_height, out);
+    free(plane);
+    return ok;
 }
 
 typedef struct { const uint8_t *data; size_t size, pos; FILE *file; } png_input_t;
@@ -412,6 +619,9 @@ bool book_image_grayscale(const uint8_t *data, size_t size, bool png,
     if (!data || !size || !out || !out_width || !out_height ||
         out_width > 1216 || out_height > 1216 || (size_t)out_width * out_height > 684u * 1216u)
         return false;
+    // 格式按签名分派：WebP 的 png 标记为 false，不能落进 JPEG 分支。
+    // Dispatch on the signature: WebP arrives with png=false and must not fall into JPEG.
+    if (book_webp_is(data, size)) return webp_gray(data, size, out_width, out_height, out);
     return png ? png_gray_input(data, size, NULL, out_width, out_height, out, NULL)
                : jpeg_gray(data, size, out_width, out_height, out);
 }
@@ -424,7 +634,8 @@ bool book_image_grayscale(const uint8_t *data, size_t size, bool png,
 #if KIIKO_BOARD_METALIO47
 #define COVER_CACHE_SCHEMA 3u
 #else
-#define COVER_CACHE_SCHEMA 2u
+// Pico渐进式封面新增lowzag，作废此前schema2缓存。/ Pico lowzag decode invalidates pre-existing schema2 covers.
+#define COVER_CACHE_SCHEMA 3u
 #endif
 
 typedef struct {
@@ -871,7 +1082,18 @@ bool book_image_file_dimensions(const char *path, bool png, unsigned *width, uns
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     *width = *height = 0;
-    bool ok = file_frame(file, png, NULL, width, height);
+    // WebP 的尺寸在文件头 32 字节内，先按签名认，避免把整本图片读进来。
+    // WebP sizes live in the first 32 bytes; recognise the signature before reading the whole file.
+    uint8_t head[64];
+    const size_t got = fread(head, 1, sizeof(head), file);
+    bool ok = false;
+    if (book_webp_is(head, got)) {
+        unsigned w = 0, h = 0;
+        ok = book_webp_frame(head, got, &w, &h) && w > 0 && h > 0 && w <= 8192 && h <= 8192;
+        if (ok) { *width = w; *height = h; }
+    } else if (!fseek(file, 0, SEEK_SET)) {
+        ok = file_frame(file, png, NULL, width, height);
+    }
     fclose(file);
     return ok;
 }
@@ -947,26 +1169,54 @@ bool book_image_file_grayscale(const char *path, bool png, unsigned width, unsig
     FILE *file = fopen(path, "rb");
     if (!file) return false;
     bool ok = false;
-    if (png) ok = png_gray_input(NULL, (size_t)st.st_size, file, width, height, out, NULL);
-    else {
+    uint8_t head[64];
+    const size_t got=fread(head,1,sizeof(head),file);
+    if(book_webp_is(head,got)) {
+        if((uint64_t)st.st_size<=12u*1024u*1024u&&!fseek(file,0,SEEK_SET)) {
+            uint8_t *image=cover_alloc((size_t)st.st_size);
+            if(image) {
+                if(fread(image,1,(size_t)st.st_size,file)==(size_t)st.st_size)
+                    ok=webp_gray(image,(size_t)st.st_size,width,height,out);
+                free(image);
+            }
+        }
+    } else if(!fseek(file,0,SEEK_SET)) {
+        if (png) ok = png_gray_input(NULL, (size_t)st.st_size, file, width, height, out, NULL);
+        else {
 #if KIIKO_BOARD_METALIO47
 #ifdef ESP_PLATFORM
-        ok=metalio_jpeg_gray(NULL,(size_t)st.st_size,file,width,height,out);
-        if(ok){fclose(file);return true;}
-        clearerr(file);
-        if(fseek(file,0,SEEK_SET)){fclose(file);return false;}
+            ok=metalio_jpeg_gray(NULL,(size_t)st.st_size,file,width,height,out);
+            if(ok){fclose(file);return true;}
+            clearerr(file);
+            if(fseek(file,0,SEEK_SET)){fclose(file);return false;}
 #endif
 #endif
-        uint8_t sof = 0;
-        unsigned source_w = 0, source_h = 0;
-        if (file_frame(file, false, &sof, &source_w, &source_h) && !fseek(file, 0, SEEK_SET)) {
-            jpeg_file_plane_t plane = {.out = out, .width = width, .height = height};
-            memset(out, 255, (size_t)width * height);
-            if (sof == 0xc2)
-                ok = jpegdec_gray_file(file, (int)st.st_size, source_w, source_h, width, height, true,
-                    jpeg_file_collect, &plane, &plane.source_w, &plane.source_h) != 0;
-            else ok = jpeg_baseline_file(file, source_w, source_h, width, height, &plane);
-            ok = ok && plane.pixels >= (size_t)width * height;
+            uint8_t sof = 0;
+            unsigned source_w = 0, source_h = 0;
+            if (file_frame(file, false, &sof, &source_w, &source_h) && !fseek(file, 0, SEEK_SET)) {
+                jpeg_file_plane_t plane = {.out = out, .width = width, .height = height};
+                memset(out, 255, (size_t)width * height);
+                if(sof==0xc2) {
+#ifdef KIIKO_USE_LOWZAG
+                    if((uint64_t)st.st_size<=24u*1024u*1024u) {
+                        uint8_t *image=cover_alloc((size_t)st.st_size);
+                        if(image) {
+                            if(fread(image,1,(size_t)st.st_size,file)==(size_t)st.st_size)
+                                ok=lowzag_gray(image,(size_t)st.st_size,width,height,out);
+                            free(image);
+                        }
+                    }
+#endif
+                    if(!ok&&!fseek(file,0,SEEK_SET)) {
+                        ok=jpegdec_gray_file(file,(int)st.st_size,source_w,source_h,width,height,true,
+                            jpeg_file_collect,&plane,&plane.source_w,&plane.source_h)!=0;
+                        ok=ok&&plane.pixels>=(size_t)width*height;
+                    }
+                } else {
+                    ok=jpeg_baseline_file(file,source_w,source_h,width,height,&plane);
+                    ok=ok&&plane.pixels>=(size_t)width*height;
+                }
+            }
         }
     }
     fclose(file);
