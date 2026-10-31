@@ -217,5 +217,13 @@
     "main/display_reader_waveform.h": "24ba18966bfb103e43a264fcf5cffa0cbacd2e76a4f047d70af0004209aa1424",
     "main/display_waveform_smooth.h": "2ea7f07b1c49e83a8670c8d8fc4a782e2dff7c0a405dc12722eb9b9dcd4c089a",
     "main/sleep.h": "9e2322807c1f0984247d0b4d4f68637ca8f8a1ce93f2a4b5a810164a2269aa9a"
+  },
+  "approved_overrides": {
+    "boards/pico/src/main/display_reader_waveform.c": {
+      "sha256": "403636026803edc56729c3050fbb61b06bfbdde8f52b8d03fd50654ffd378a6f",
+      "pull_request": 55,
+      "source_commit": "95bf1e09f03efb50ee7a048e3e83af071a5a92e0",
+      "reason": "User2026-10-31 approved Pico reader timing from PR55; S31 remains PR59."
+    }
   }
 }

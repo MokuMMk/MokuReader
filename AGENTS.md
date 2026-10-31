@@ -10,6 +10,9 @@ Newcomers (human or agent): read [docs/ONBOARDING.md](docs/ONBOARDING.md). Takin
 
 ## 当前工作：双板型本地整合 / Current work: local multi-board integration
 
+用户2026-10-31批准合并PR55–58：Pico阅读按PR55更新，S31硬件/阅读波形仍以PR59为准；图片与书架功能适配双板源码。
+User2026-10-31 approves PR55–58: adopt PR55 for Pico reader timing, retain PR59 S31 hardware/waveforms, and adapt shared image/shelf features to both boards.
+
 用户2026-10-31指定合并PR59：底层驱动、供电/睡眠及阅读波形以PR59为准，功能界面以本机7278bd2为基线接入最新引导、语言、管理与阅读状态。此指令取代此前本地缓存保护和阅读波形回退决定；板型隔离与禁止永久OTP/eFuse写入仍适用。
 User decision2026-10-31: merge PR59's drivers, power/sleep and reader waveforms, integrating the latest setup/locale/management/reader state from local7278bd2. This supersedes prior local cache-guard and waveform rollback choices; board isolation and permanent OTP/eFuse prohibitions remain.
 
