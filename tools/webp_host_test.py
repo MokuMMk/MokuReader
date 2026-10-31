@@ -100,7 +100,7 @@ def main() -> int:
             # The host is x86 and libwebp would pull SSE2 paths; only the generic C sources are
             # vendored, so disable its SIMD detection.
             subprocess.run(['cc', '-std=c11', '-O2', '-w', '-U__SSE2__', '-U__SSSE3__',
-                            '-U__SSE4_1__', '-U__AVX2__', *SANITIZE, *INCLUDES,
+                            '-U__SSE4_1__', '-U__AVX2__', '-U__ARM_NEON__', '-U__aarch64__', *SANITIZE, *INCLUDES,
                             '-c', str(source), '-o', str(obj)], check=True)
             objects.append(str(obj))
         exe = work / 'webp-test'

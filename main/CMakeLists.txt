@@ -203,6 +203,7 @@ set(main_requires
     espressif__esp_jpeg
     # 渐进式 JPEG；基线仍走 esp_jpeg。/ Progressive JPEG; baseline stays on esp_jpeg.
     jpegdec
+    defensiblelogic__lowzag
     # WebP 插图与封面的解码器（libwebp 解码子集）。/ WebP decoder subset for illustrations and covers.
     read_pico_webp
     espressif__libpng
