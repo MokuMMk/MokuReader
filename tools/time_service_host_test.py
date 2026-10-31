@@ -90,7 +90,7 @@ static void vTaskDelete(void *t){(void)t;}
 scheduler+='\n'.join(x for x in (root/'main/time_service.c').read_text().splitlines() if not x.startswith('#include'))
 scheduler+=r'''
 static void reset(void){
- s_loaded=false;s_last_sync=0;s_next_attempt_us=15000000;atomic_store(&s_running,false);
+ s_loaded=s_force_online=s_online_pending=false;s_last_sync=0;s_next_attempt_us=15000000;atomic_store(&s_running,false);
  stored=pending=jobs=pmu_syncs=saves=credential_reads=worker_result=0;task_ok=1;creds=true;mono=15000000;
  network=(read_pico_transfer_status_t){READ_PICO_TRANSFER_STOPPED,READ_PICO_TRANSFER_MODE_STA,false};
 }
@@ -109,6 +109,17 @@ int main(void){
  task_ok=1;app_time_service_poll(true);assert(!jobs);mono+=CLOCK_RETRY_US;app_time_service_poll(true);assert(jobs==1);
  reset();worker_result=ESP_FAIL;app_time_service_poll(true);job(NULL);app_time_service_poll(true);assert(!pmu_syncs&&!saves&&jobs==1);
  pending=wall;app_time_service_poll(false);assert(pending);app_time_service_poll(true);assert(!pending&&pmu_syncs==1&&saves==1);
+ // First-setup request runs immediately on a ready STA, once, with normal result handoff.
+ reset();stored=wall;mono=0;network=(read_pico_transfer_status_t){READ_PICO_TRANSFER_READY,READ_PICO_TRANSFER_MODE_STA,true};
+ app_time_service_request_online_sync();assert(app_time_service_online_sync_pending());app_time_service_poll(false);assert(!jobs);
+ app_time_service_poll(true);assert(jobs==1&&app_time_service_online_sync_pending());
+ app_time_service_request_online_sync();app_time_service_poll(true);assert(jobs==1);job(NULL);app_time_service_poll(true);
+ assert(!app_time_service_online_sync_pending()&&jobs==1&&pmu_syncs==1&&saves==1);
+ reset();mono=0;app_time_service_request_online_sync();app_time_service_poll(true);assert(!jobs&&!credential_reads&&app_time_service_online_sync_pending());
+ network=(read_pico_transfer_status_t){READ_PICO_TRANSFER_READY,READ_PICO_TRANSFER_MODE_STA,true};task_ok=0;
+ app_time_service_poll(true);assert(!jobs&&app_time_service_online_sync_pending());task_ok=1;app_time_service_poll(true);assert(!jobs);
+ mono+=CLOCK_RETRY_US;app_time_service_poll(true);assert(jobs==1);worker_result=ESP_FAIL;job(NULL);app_time_service_poll(true);
+ assert(!app_time_service_online_sync_pending()&&!pmu_syncs&&!saves);
  puts("PASS: actual scheduler hourly online/6h offline, idle gating, single temporary worker, AP/upload exclusion, no-credential/OOM/error backoff and real-sync-only PMU/NVS handoff");
 }
 '''

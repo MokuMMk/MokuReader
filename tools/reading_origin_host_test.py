@@ -25,6 +25,8 @@ typedef int app_home_component_t;
 #define ESP_OK 0
 static app_home_component_t s_components[]={0,1,7};
 static int s_view=HOME_ROOT,s_component_browse,s_goal_draft,s_time_stamp;
+
+static int metalio_haptic_click(void){return 0;}
 static bool s_press_pending,s_save_error,s_component_pending,s_widget_pending,s_time_pending;
 static struct {bool valid;} s_time_trail;
 static EpdRect s_pressed,s_area,s_component_dirty;
@@ -43,6 +45,7 @@ static int ui_nav_hit(int x,int y){(void)x;return y>=1096?2:-1;}
 static void ui_nav_request(app_ctx_t *ctx,int tab){(void)ctx;nav=tab;}
 static bool app_book_request_open_from_home(const char *path){assert(!strcmp(path,book.path));++open_calls;return !fail_open;}
 '''
+if 's_clock_base_attempted' in home.read_text():unit+='\nstatic bool s_clock_base_attempted __attribute__((unused));\n'
 if 's_component_warm_after_ms' in home.read_text():unit+='\nstatic int64_t s_component_warm_after_ms;\n#define STATIC_PICKER_FAST_INPUT 1\n'
 unit+='\n'.join(function(n,home) for n in ['continue_card_rect','continue_card_hit_rect','continue_card_pressed','control_feedback_area','hit','control','on_gesture'])
 settings=(root/'main/settings.h').read_text();a=settings.index('typedef enum {\n    APP_READER_KEY_PREV');b=settings.index('} app_reader_key_action_t;',a)+len('} app_reader_key_action_t;');unit+=settings[a:b]

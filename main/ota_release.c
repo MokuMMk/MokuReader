@@ -3,6 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  * 中文：公开升级清单的严格解析与版本比较。/ English: strict public release parsing and version comparison.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ota_online.h"
 #include "cJSON.h"
 #include <ctype.h>

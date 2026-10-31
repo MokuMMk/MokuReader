@@ -1,5 +1,16 @@
 # 版本变更 / Changelog
 
+## 未发布 / Unreleased — 最新功能界面 / Latest interface
+
+- 合入PR59双板统一源码，底层驱动、供电/睡眠与阅读波形按PR原实现；接入最新功能界面，Pico/S31各用独立后端、配置和产物。
+  Merge PR59's unified tree with its original drivers, power/sleep and reader waveforms, integrating the latest interface with isolated board backends/configs/packages.
+- 首次引导覆盖语言、Wi-Fi与卡内字体，支持U盘/扫码传入及分页选择，选中字体同时应用系统与阅读；已有配置升级不重复引导，失败保存不退出。系统界面可切换中英文，联网后后台对时。
+  Setup covers language, Wi-Fi and card fonts via USB/QR transfer and a paged picker, applying the choice to UI and reading. Existing profiles skip setup and failed saves remain retryable. Add system localization and background time synchronization.
+- 文件加入多级递归搜索、列表/图标视图、递归书籍统计、跨页多选、目标目录移动及确认删除。移动不覆盖同名目标，失败项保留待重试；书架管理按名称、最近阅读或首次收录升降序排列，显示统一封面。网络私有存储保存八个Wi-Fi配置，开启蓝牙后尝试重连最近设备。
+  Files adds recursive search/counting, list/grid views, persistent multiselection, destination moves and confirmed deletion, with no overwrite and failed-item retries. Shelf management sorts by name/recent/first-added in either direction with consistent thumbnails. Save eight private Wi-Fi profiles and reconnect the most recent Bluetooth peer on enable.
+- 新开书默认标准模式及工具栏，中间单击切换全屏，沉浸偏好独立决定全屏样式。切换保留阅读锚点、翻页保留模式，信息栏空闲后局刷，手动与周期清理保留。四个根页、文件管理、设置和引导操作栏同步最新布局；EPUB标准封面缺失时按明确文件名回退。
+  New books open with standard tools; centre taps toggle fullscreen independently of the immersive style. Preserve anchors/modes, update metadata locally after idle and retain manual/periodic cleanup. Update root/file/settings/setup layouts and add explicit-filename EPUB cover fallback.
+
 ## 双板型源码并入 main / Unified two-board source in main
 
 - 本仓库 main 现在同时维护 Pico 与 Metalio S31：`boards/<板型>/` 保存板级身份、sdkconfig、分区表、依赖锁和硬件后端，统一构建入口为 `tools/build_firmware.py --board pico|metalio47`（Windows 用 `tools/build_board.ps1`）。共享 `main/`、`components/` 只保留一份，固件仍不能跨板型刷写；官网发布范围与第三方许可不变。

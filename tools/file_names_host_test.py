@@ -23,9 +23,14 @@ unit=r'''
 #define FILE_MAX 96
 #define FILE_VIEW_MOVE 2
 #define FILE_VIEW_LIST 1
-typedef struct {char path[288];off_t size;bool is_dir;}file_item_t;
+typedef struct {char path[288];off_t size;int64_t modified;bool is_dir,selected;}file_item_t;
 static file_item_t s_files[FILE_MAX],s_selected;
-static int s_count,s_page,s_view=FILE_VIEW_LIST,s_counts[3];
+static int s_count,s_page,s_view=FILE_VIEW_LIST,s_counts[3],s_file_sort;
+static bool s_file_desc;
+static char s_file_query[65];
+static void file_search_start(void){assert(!s_file_query[0]);}
+static void file_search_stop(void){}
+static void file_selection_restore(void){}
 static char s_message[128],test_root[288];
 static struct{bool mounted;uint64_t free_bytes;}s_sd;
 static bool files_alloc(void){return true;}

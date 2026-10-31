@@ -5,6 +5,9 @@
  * 用户修订：滑动和点按只恢复控件底图并绘制局部反馈，不重新模糊、排字、写设置或调用硬件。
  * User revision: movement/presses restore cached controls without reblurring, shaping text, settings writes or hardware calls.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_power_dialog.h"
 #include <stdlib.h>
 #include <string.h>

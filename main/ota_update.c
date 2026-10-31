@@ -8,6 +8,9 @@
  * 冻结：不得覆盖当前运行分区，不在校验结束前切换启动分区。
  * Frozen: never overwrite the running partition or switch boot slots before validation completes.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ota_update.h"
 #include "kiiko_board_config.h"
 

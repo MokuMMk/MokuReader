@@ -36,7 +36,13 @@ typedef struct {bool mounted;uint64_t free_bytes;} read_pico_sd_info_t;
 enum {FILE_VIEW_LIST,FILE_VIEW_MOVE};
 '''+item_type+r'''
 static file_item_t *s_files,s_selected;
-static int s_count,s_page,s_view,s_counts[3];
+static int s_count,s_page,s_view,s_counts[3],s_file_sort;
+static bool s_file_desc;
+static char s_file_query[65];
+static unsigned recursive_starts;
+static void file_search_start(void){++recursive_starts;}
+static void file_search_stop(void){}
+static void file_selection_restore(void){}
 static char s_message[96],s_dir[288],root[80],opened[288],copied_to[288];
 static read_pico_sd_info_t s_sd;
 static bool card=true,alloc_ok=true;
@@ -75,7 +81,7 @@ static void make_file(const char *name){char path[512];assert(snprintf(path,size
 static int find(const char *name){for(int i=0;i<s_count;++i)if(!strcmp(file_item_name(&s_files[i]),name))return i;return -1;}
 static void clear_root(void){DIR *d=opendir(root);assert(d);struct dirent *e;while((e=readdir(d))){if(!strcmp(e->d_name,".")||!strcmp(e->d_name,".."))continue;char p[512];snprintf(p,sizeof(p),"%s/%s",root,e->d_name);struct stat st;assert(!stat(p,&st));assert(S_ISDIR(st.st_mode)?!rmdir(p):!unlink(p));}assert(!closedir(d));}
 static void verify_name(const char *name){
- make_file(name);scan_folder(0);assert(s_count==1&&s_counts[0]==1);
+ make_file(name);s_counts[0]=777;scan_folder(0);assert(s_count==1&&s_counts[0]==777);
  int n=find(name);assert(n==0&&!s_files[n].is_dir);s_selected=s_files[n];
  char expected[288];assert(snprintf(expected,sizeof(expected),"%s/%s",root,name)<(int)sizeof(expected));assert(!strcmp(s_selected.path,expected));
  char preview[128];copy_utf8(preview,sizeof(preview),file_item_name(&s_selected));assert(strlen(preview)<sizeof(preview));assert(!memcmp(name,preview,strlen(preview)));assert(((unsigned char)name[strlen(preview)]&0xc0)!=0x80);
@@ -102,8 +108,15 @@ int main(void){
  // General directory and type-specific filters retain long directory, image and font names.
  name_repeat(name,"册",44,"");char path[512];snprintf(path,sizeof(path),"%s/%s",root,name);assert(!mkdir(path,0700));
  scan_folder(3);assert(s_count==1&&s_files[0].is_dir&&!strcmp(file_item_name(&s_files[0]),name));
+ scan_folder(0);assert(s_count==1&&s_files[0].is_dir&&!strcmp(file_item_name(&s_files[0]),name));
  s_view=FILE_VIEW_MOVE;scan_folder(3);assert(s_count==1);s_view=FILE_VIEW_LIST;assert(!rmdir(path));
  const char *suffix[]={".png",".ttf",".otf"};for(unsigned i=0;i<3;++i){name_repeat(name,"名",44,suffix[i]);make_file(name);scan_folder(i?2:1);assert(s_count==1);s_selected=s_files[0];app_ctx_t ctx={0};open_selected(&ctx);assert((!i&&ctx.request_app==&app_image)||(i&&!ctx.request_app));clear_root();}
+ // Books retain visible nested folders; enter each ordinary directory and open its original book path.
+ char original_root[80];strcpy(original_root,root);make_file("root.epub");char level1[288],level2[288];
+ snprintf(level1,sizeof(level1),"%s/Collection",root);assert(!mkdir(level1,0700));scan_folder(0);assert(s_count==2&&s_files[0].is_dir&&find("Collection")==0);
+ snprintf(root,sizeof(root),"%s/Collection",original_root);snprintf(level2,sizeof(level2),"%s/Series",root);assert(!mkdir(level2,0700));scan_folder(3);assert(s_count==1&&s_files[0].is_dir&&!strcmp(file_item_name(&s_files[0]),"Series"));
+ snprintf(root,sizeof(root),"%s/Collection/Series",original_root);make_file("nested.epub");scan_folder(3);assert(s_count==1&&!s_files[0].is_dir);s_selected=s_files[0];app_ctx_t nested={0};open_selected(&nested);assert(nested.request_app==&app_book&&strstr(opened,"Collection/Series/nested.epub"));clear_root();
+ assert(!rmdir(level2)&&!rmdir(level1));strcpy(root,original_root);clear_root();
  // Existing hidden/type filters and media failures remain; no path is truncated into another target.
  make_file("short.epub");make_file(".hidden.epub");make_file("ignored.zip");scan_folder(0);assert(s_count==1&&find("short.epub")==0);
  card=false;scan_folder(0);assert(!s_count&&s_message[0]);card=true;scan_folder(3);assert(s_count==2);clear_root();
@@ -111,6 +124,8 @@ int main(void){
  char saved_root[80];strcpy(saved_root,root);strcat(root,"/nested-directory-long");assert(!mkdir(root,0700));
  name_repeat(name,"a",245,".epub");make_file(name);scan_folder(0);assert(!s_count);clear_root();assert(!rmdir(root));strcpy(root,saved_root);
  assert(haptics==(KIIKO_BOARD_METALIO47?book_opens:0));assert(image_opens==1&&font_opens==2);
+ strcpy(s_file_query,"book");scan_folder(0);assert(recursive_starts==1);
+ s_view=FILE_VIEW_MOVE;scan_folder(3);assert(recursive_starts==1);
  free(s_files);assert(!rmdir(root));
  puts("PASS: actual browser scan/open/copy/move preserves 40-44/80 Chinese, 121-250-byte ASCII, emoji, long folders/images/fonts, same-prefix identities, UTF-8 label bounds and SD/type guards");
 }

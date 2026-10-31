@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "sd_recovery.h"
 #include <string.h>
 #include "read_pico_sd.h"

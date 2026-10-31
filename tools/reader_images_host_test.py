@@ -192,6 +192,21 @@ static void free_book(void){
  book_layout_set_image_dims(NULL,NULL);s_reader_dims_ctx=(reader_dims_ctx_t){0};
 }
 '''
+unit+=r"""
+#define READER_IMAGE_ZOOM_MIN 1000
+static bool s_zoom_active,s_image_pan_active,s_image_zoom_bw;
+static int s_zoom_slot,s_image_zoom,s_image_zoom_cx,s_image_zoom_cy;
+static size_t s_image_zoom_page,s_zoom_bits_bytes;
+static uint32_t s_image_zoom_start_distance;
+static uint8_t *s_zoom_bits;
+static struct {bool pending;}s_reader_tap;
+static void continuous_du_reset(void){}
+static bool reader_single_image_page(void){return whole_image>=0;}
+static void draw_zoomed_image(uint8_t *fb,EpdRect band,int scale,int cx,int cy,bool bw){
+ (void)fb;(void)band;(void)scale;(void)cx;(void)cy;(void)bw;assert(false);
+}
+"""
+unit+='\n'+function('reader_zoom_reset')
 for name in ('inline_ink_gray', 'reader_image_slots', 'reader_image_slot', 'reader_image_dims', 'alloc_page_bitmap', 'release_page_images', 'prepare_inline_image', 'draw_reader_images', 'heading_text_matches', 'load_chapter_at'):
     unit += '\n' + function(name)
 unit += r'''

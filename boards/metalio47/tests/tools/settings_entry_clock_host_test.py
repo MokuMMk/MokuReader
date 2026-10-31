@@ -65,7 +65,7 @@ static uint8_t fb[684*1216],next_fb[684*1216];
 static bool locked;
 static unsigned status_paints,background_paints,display_calls,failed;
 static int64_t ui_nav_clock_minute(void){return minute;}
-static bool app_settings_reader_immersive(void){return immersive;}
+
 static const char *app_settings_book_background_path(void){return wallpaper?"/sdcard/pictures/bg.jpg":"";}
 static void lock_draw(void){assert(!locked);locked=true;}
 static void unlock_draw(void){assert(locked);locked=false;}
@@ -85,6 +85,7 @@ branch=present[present.index('    if (s_reader_clock_pending) {'):present.index(
 unit+='static bool clock_present(app_ctx_t *ctx,app_redraw_t redraw){\n'+branch+'\nreturn false;}\n'
 # Actual prefetched-page path; freshness is checked after copying, before any push.
 unit+=r'''
+static bool s_reader_image_exit_pending;
 static bool s_water_turn_pending,s_reader_turn_pending,s_reader_image_refresh_pending,s_toolbar,s_clear_confirm,s_reader_footer_pending;
 static uint8_t *s_next_fb=next_fb,*s_page_images;
 static int s_next_page=2,s_page=2,s_mode;
@@ -154,7 +155,7 @@ int main(void){
  ++minute;touch_t touch={true};ctx.touch=&touch;
  assert(reader_clock_tick(&ctx)==APP_REDRAW_NONE);ctx.touch=NULL;
  s_reader_fullscreen=immersive=true;assert(reader_clock_tick(&ctx)==APP_REDRAW_NONE);
- immersive=false;wallpaper=true;
+ s_reader_fullscreen=immersive=false;wallpaper=true;
  assert(reader_clock_tick(&ctx)==APP_REDRAW_AREA&&background_paints==1&&fb[0]==29);
  failed=1;assert(clock_present(&ctx,APP_REDRAW_AREA)&&s_reader_clock_minute==100);
  assert(reader_clock_tick(&ctx)==APP_REDRAW_AREA);failed=0;

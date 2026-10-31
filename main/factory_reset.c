@@ -2,6 +2,9 @@
  * 中文：显式白名单恢复系统设置；不擦NVS分区，不触及VCOM、OTA元数据或TF文件。
  * English: Reset an explicit namespace allowlist, never whole NVS, VCOM, OTA metadata or TF files.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "factory_reset.h"
 #include "kiiko_board_config.h"
 #include "nvs.h"

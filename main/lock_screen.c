@@ -6,6 +6,9 @@
  * 用户采纳PR48：S31自选宽限只在真实按键浅睡唤醒后判断，冷启动仍验证。
  * User accepted PR48: S31 opt-in grace is checked only after real key light wake; cold boots still authenticate.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "lock_screen.h"
 #include "lock_pin.h"
 #include "settings.h"

@@ -4,6 +4,9 @@
  * 冻结：只处理启动记录中确切的普通 TXT/EPUB；无卡/删除失败可重试；绘制无文件操作。
  * Frozen: Handle only the exact regular TXT/EPUB in the startup record; allow retries after absent media or failed deletion. Rendering has no file operations.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "app.h"
 #include "app_registry.h"
 #include "boot_state.h"

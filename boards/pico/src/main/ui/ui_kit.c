@@ -14,6 +14,9 @@
  * User fix: directory titles share this path and blend antialiasing into their row background without white fringes.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_kit.h"
 
 #include <string.h>
@@ -327,6 +330,10 @@ void ui_text(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     px = ui_text_effective_px(px);
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
@@ -336,6 +343,10 @@ void ui_text(
 }
 
 void ui_text_line_span_px(int px, const char* text, int* above, int* below) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     // 与 ui_text 完全同一条字体路径：内置位图与 TTF 的字面高度不同，换字体后按实测排。
     // Exactly the ui_text face path: the bitmap and TTF faces differ in ink height, so layout
     // follows the measured extents after any face change.
@@ -351,6 +362,10 @@ void ui_text_line_span_px(int px, const char* text, int* above, int* below) {
 }
 
 int ui_text_ink_center_y(int y_top, int px, const char *text) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     // ui_text 把基线放在 y_top + ascender，墨迹自基线上下伸展（above/below 相对基线），
     // 因此墨迹中心 = 基线 - (above - below) / 2，与 ui_text_fixed_context_vc 的落笔公式同源。
     // ui_text puts the baseline at y_top + ascender with ink spreading around it, so the ink
@@ -370,10 +385,19 @@ int ui_text_ink_center_y(int y_top, int px, const char *text) {
 }
 
 int ui_text_fixed_width_px(int px, const char* text) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     return ui_text_fixed_context_width_px(px, text, text);
 }
 
 int ui_text_fixed_context_width_px(int px, const char* text, const char* font_sample) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if (!text || px <= 0) return 0;
     return (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(font_sample ? font_sample : text)
         ? ui_font_text_width_px(px, text)
@@ -384,6 +408,10 @@ void ui_text_fixed(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
     if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text))
@@ -396,6 +424,10 @@ void ui_text_fixed_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     ui_text_fixed_context_vc(framebuffer, x, center_y, px, text, text, align, inverted);
 }
 
@@ -403,6 +435,11 @@ void ui_text_fixed_context_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     const char* font_sample, enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if (!framebuffer || !text || !text[0] || px <= 0) return;
     int above = 0, below = 0;
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
@@ -418,6 +455,10 @@ void ui_text_fixed_context_vc(
 
 void ui_text_box(uint8_t *fb, EpdRect box, int px, const char *text,
                  enum EpdFontFlags align, bool inverted) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     if (!fb || !text || !text[0] || box.width <= 0 || box.height <= 0) return;
     px = ui_text_effective_px(px);
     const bool builtin = (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text);
@@ -444,6 +485,10 @@ void ui_text_box(uint8_t *fb, EpdRect box, int px, const char *text,
 
 void ui_text_fixed_ink_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                           enum EpdFontFlags align, uint8_t gray) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     if (!fb || !text || !*text || px <= 0) return;
     int above = 0, below = 0;
     uint8_t ink = ui_contrast_gray(gray) >> 4;
@@ -464,6 +509,11 @@ static bool title_uses_active_font(const char *sample) {
 
 void ui_text_fixed_context_aa_vc(uint8_t *fb,int x,int center_y,int px,const char *text,
                                const char *font_sample,enum EpdFontFlags align,uint8_t gray,uint8_t background) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if(!fb||!text||!*text||px<=0)return;
     int above=0,below=0;
     uint8_t ink=ui_contrast_gray(gray)>>4,back=ui_contrast_gray(background)>>4;
@@ -495,6 +545,11 @@ int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_
 
 void ui_text_title_background_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                                  const char *font_sample, enum EpdFontFlags align, uint8_t background) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if (!fb || !text || !*text) return;
     int above = 0, below = 0;
     uint8_t back = background >> 4;
@@ -514,6 +569,11 @@ void ui_text_title_background_vc(uint8_t *fb, int x, int center_y, int px, const
 
 void ui_text_title_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                       const char *font_sample, enum EpdFontFlags align) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     ui_text_title_background_vc(fb, x, center_y, px, text, font_sample, align, UI_GRAY_WHITE);
 }
 
@@ -521,6 +581,10 @@ void ui_text_bw(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     px = ui_text_effective_px(px);
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
@@ -533,6 +597,10 @@ void ui_text_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     px = ui_text_effective_px(px);
     int above = 0;
     int below = 0;

@@ -8,12 +8,16 @@
  * Frozen: Typed uploads limit book/image/font formats; Add File accepts any format within the TF root, preserving UTF-8 names and checking capacity first.
  * 为传入升级包等其他文件增加目录上传；分类上传仍保持原有限额和失败清理。
  * Directory uploads also accept upgrade packages; typed uploads retain their limits and failed-part cleanup.
- * 冻结：热点网页或停服设备触屏可配置网络，不自动切模式；凭据只存单个NVS blob，状态不含密码。
- * 冻结：显式对时优先复用已连接的 STA；停服时才短暂连接，用毕释放；凭据只保存在原 NVS blob。
- * Frozen: Explicit time sync reuses connected STA; only a stopped service connects briefly and releases WiFi; credentials stay in the original NVS blob.
+ * 冻结：热点网页或停服设备触屏可配置网络，不自动切模式；按用户要求在私有 NVS 记忆八个网络，状态不含密码。
+ * Frozen: User-requested private NVS bank retains eight networks, migrates legacy credentials and never exposes passwords in status.
+ * 冻结：显式对时优先复用已连接的 STA；停服时才短暂连接，用毕释放；凭据保留原命名空间，兼容旧单网络记录。
+ * Frozen: Explicit time sync reuses connected STA; only a stopped service connects briefly and releases WiFi; credentials keep the original namespace and migrate the legacy single record.
  * 已连接后仍启动临时 WiFi 会返回状态错误，因此改为按连接状态分流。
  * Starting temporary WiFi while already connected returned invalid state, so sync now routes by connection state.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "read_pico_search.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -616,6 +620,8 @@ static char *s_buffer;
 static size_t s_buffer_capacity;
 static bool s_stopping, s_upload_active;
 static bool s_config_busy;
+static bool s_profile_confirmed;
+static int64_t s_profile_confirm_after;
 // 对时独占 SNTP 与临时 WiFi；取消后等待清理完成，才允许拆网络或睡眠。
 // Time sync owns SNTP/temporary WiFi; wait for cleanup before network teardown or sleep.
 static bool s_time_active, s_time_automatic, s_time_cancel;
@@ -683,6 +689,7 @@ static void release_config(void) {
 static void publish_credentials(const transfer_credentials_t *c) {
     portENTER_CRITICAL(&s_lock);
     s_status.wifi_configured = c && c->version == 1;
+    s_profile_confirmed=false;s_profile_confirm_after=0;
     memset(s_status.wifi_ssid, 0, sizeof(s_status.wifi_ssid));
     if (s_status.wifi_configured) memcpy(s_status.wifi_ssid, c->ssid, sizeof(s_status.wifi_ssid));
     portEXIT_CRITICAL(&s_lock);
@@ -758,6 +765,19 @@ esp_err_t read_pico_transfer_import_wifi_backup(const read_pico_transfer_wifi_ba
     clear_secret(&next, sizeof(next));
     release_config();
     return err;
+}
+
+esp_err_t read_pico_transfer_select_saved_wifi(const char *ssid) {
+    if(!cancel_time_sync(true))return ESP_ERR_INVALID_STATE;
+    read_pico_transfer_status_t status;read_pico_transfer_get_status(&status);
+    if(s_wifi||s_http||s_netif||status.state!=READ_PICO_TRANSFER_STOPPED)return ESP_ERR_INVALID_STATE;
+    if(!claim_config())return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t saved={0};bool confirmed=false;
+    esp_err_t err=find_saved_credentials(ssid,&saved,&confirmed);
+    if(err==ESP_OK&&!confirmed)err=ESP_ERR_INVALID_STATE;
+    if(err==ESP_OK)err=store_credentials(&saved);
+    if(err==ESP_OK)publish_credentials(&saved);
+    clear_secret(&saved,sizeof(saved));release_config();return err;
 }
 
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password) {
@@ -1072,6 +1092,7 @@ cleanup:
     if (scan_netif) esp_netif_destroy_default_wifi(scan_netif);
     if (loop_owned) (void)esp_event_loop_delete_default();
     if (err != ESP_OK) { memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0; }
+    if(err==ESP_OK)mark_saved_networks(out,*count);
     ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
     ble_pt_network_release();
     release_config();
@@ -1088,10 +1109,12 @@ esp_err_t read_pico_transfer_forget_wifi(void) {
         (status.mode == READ_PICO_TRANSFER_MODE_STA && (s_wifi || s_started || s_http || s_netif)))
         return ESP_ERR_INVALID_STATE;
     if (!claim_config()) return ESP_ERR_INVALID_STATE;
-    esp_err_t err = store_credentials(NULL);
+    esp_err_t err = forget_current_credentials();
     if (err == ESP_OK) {
-        publish_credentials(NULL);
-        ESP_LOGI("transfer", "wifi saved configured=0");
+        transfer_credentials_t remaining={0};
+        if(load_credentials(&remaining)==ESP_OK)publish_credentials(remaining.version==1?&remaining:NULL);
+        clear_secret(&remaining,sizeof(remaining));
+        ESP_LOGI("transfer", "wifi profile forgotten");
     }
     release_config(); return err;
 }
@@ -1174,6 +1197,15 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
 void read_pico_transfer_service_poll(void) {
     if (!s_started || s_cfg.mode != READ_PICO_TRANSFER_MODE_STA) return;
     int64_t now = esp_timer_get_time() / 1000;
+    read_pico_transfer_status_t snapshot;read_pico_transfer_get_status(&snapshot);
+    if(!s_profile_confirmed&&snapshot.network_ready&&snapshot.state!=READ_PICO_TRANSFER_UPLOADING&&now>=s_profile_confirm_after){
+        if(claim_config()){
+            esp_err_t saved=confirm_current_credentials();
+            s_profile_confirmed=saved==ESP_OK;s_profile_confirm_after=now+30000;
+            release_config();
+        }
+    }
+
     portENTER_CRITICAL(&s_lock);
     int action = s_stopping ? 0 : connection_poll(&s_connection, now);
     unsigned attempts = s_connection.attempts;
@@ -2350,6 +2382,8 @@ static bool s_wifi, s_started, s_loop_owned;
 static char *s_buffer;
 static bool s_stopping, s_upload_active;
 static bool s_config_busy;
+static bool s_profile_confirmed;
+static int64_t s_profile_confirm_after;
 // 对时独占 SNTP 与临时 WiFi；取消后等待清理完成，才允许拆网络或睡眠。
 // Time sync owns SNTP/temporary WiFi; wait for cleanup before network teardown or sleep.
 static bool s_time_active, s_time_automatic, s_time_cancel;
@@ -2427,6 +2461,7 @@ static void release_config(void) {
 static void publish_credentials(const transfer_credentials_t *c) {
     portENTER_CRITICAL(&s_lock);
     s_status.wifi_configured = c && c->version == 1;
+    s_profile_confirmed=false;s_profile_confirm_after=0;
     memset(s_status.wifi_ssid, 0, sizeof(s_status.wifi_ssid));
     if (s_status.wifi_configured) memcpy(s_status.wifi_ssid, c->ssid, sizeof(s_status.wifi_ssid));
     portEXIT_CRITICAL(&s_lock);
@@ -2502,6 +2537,19 @@ esp_err_t read_pico_transfer_import_wifi_backup(const read_pico_transfer_wifi_ba
     clear_secret(&next, sizeof(next));
     release_config();
     return err;
+}
+
+esp_err_t read_pico_transfer_select_saved_wifi(const char *ssid) {
+    if(!cancel_time_sync(true))return ESP_ERR_INVALID_STATE;
+    read_pico_transfer_status_t status;read_pico_transfer_get_status(&status);
+    if(s_wifi||s_http||s_netif||status.state!=READ_PICO_TRANSFER_STOPPED)return ESP_ERR_INVALID_STATE;
+    if(!claim_config())return ESP_ERR_INVALID_STATE;
+    transfer_credentials_t saved={0};bool confirmed=false;
+    esp_err_t err=find_saved_credentials(ssid,&saved,&confirmed);
+    if(err==ESP_OK&&!confirmed)err=ESP_ERR_INVALID_STATE;
+    if(err==ESP_OK)err=store_credentials(&saved);
+    if(err==ESP_OK)publish_credentials(&saved);
+    clear_secret(&saved,sizeof(saved));release_config();return err;
 }
 
 esp_err_t read_pico_transfer_save_wifi(const char *ssid, const char *password) {
@@ -2764,6 +2812,7 @@ cleanup:
     // Keep the process-wide default event loop alive. Other screens reuse it;
     // deleting and recreating it around every scan caused stale hosted events.
     if (err != ESP_OK) { memset(out, 0, sizeof(*out) * READ_PICO_TRANSFER_SCAN_MAX); *count = 0; }
+    if(err==ESP_OK)mark_saved_networks(out,*count);
     ESP_LOGI("transfer", "wifi scan result=%s count=%u", esp_err_to_name(err), (unsigned)*count);
     ble_pt_network_release();
     release_config();
@@ -2780,10 +2829,12 @@ esp_err_t read_pico_transfer_forget_wifi(void) {
         (status.mode == READ_PICO_TRANSFER_MODE_STA && (s_wifi || s_started || s_http || s_netif)))
         return ESP_ERR_INVALID_STATE;
     if (!claim_config()) return ESP_ERR_INVALID_STATE;
-    esp_err_t err = store_credentials(NULL);
+    esp_err_t err = forget_current_credentials();
     if (err == ESP_OK) {
-        publish_credentials(NULL);
-        ESP_LOGI("transfer", "wifi saved configured=0");
+        transfer_credentials_t remaining={0};
+        if(load_credentials(&remaining)==ESP_OK)publish_credentials(remaining.version==1?&remaining:NULL);
+        clear_secret(&remaining,sizeof(remaining));
+        ESP_LOGI("transfer", "wifi profile forgotten");
     }
     release_config(); return err;
 }
@@ -2866,6 +2917,15 @@ static void ip_event(void *arg, esp_event_base_t base, int32_t id, void *data) {
 void read_pico_transfer_service_poll(void) {
     if (!s_started || s_cfg.mode != READ_PICO_TRANSFER_MODE_STA) return;
     int64_t now = esp_timer_get_time() / 1000;
+    read_pico_transfer_status_t snapshot;read_pico_transfer_get_status(&snapshot);
+    if(!s_profile_confirmed&&snapshot.network_ready&&snapshot.state!=READ_PICO_TRANSFER_UPLOADING&&now>=s_profile_confirm_after){
+        if(claim_config()){
+            esp_err_t saved=confirm_current_credentials();
+            s_profile_confirmed=saved==ESP_OK;s_profile_confirm_after=now+30000;
+            release_config();
+        }
+    }
+
     portENTER_CRITICAL(&s_lock);
     int action = s_stopping ? 0 : connection_poll(&s_connection, now);
     unsigned attempts = s_connection.attempts;

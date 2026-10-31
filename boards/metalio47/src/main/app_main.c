@@ -18,6 +18,8 @@
 #include "app_loop.h"
 #include "app_content_open.h"
 #include "boot_state.h"
+#include "setup_state.h"
+extern const app_desc_t app_onboarding;
 #include "lock_screen.h"
 #include "ui_lock_feedback.h"
 #include "lock_pin.h"
@@ -112,13 +114,14 @@ static void draw_startup_frame(uint8_t *framebuffer) {
     const int cy = epd_rotated_display_height() / 2;
     static const char *const wordmark[] = {"K", "i", "i", "k", "o", "r", "e", "a", "d"};
     static const char *const caption[] = {"准", "备", "资", "源"};
+    static const char *const caption_en[]={"P","r","e","p","a","r","i","n","g"," ","r","e","s","o","u","r","c","e","s"};
     const struct {
         const char *text;
         const char *const *letters;
         int count, px, tracking, gray, center_y;
     } lines[] = {
         {"Kiikoread", wordmark, 9, 72, 2, 0, cy - 50},
-        {"准备资源", caption, 4, 24, 8, 7, cy + 20},
+        {app_setup_english()?"Preparing resources":"准备资源", app_setup_english()?caption_en:caption, app_setup_english()?19:4, 24, app_setup_english()?1:8, 7, cy + 20},
     };
     // 以实际字宽居中，疏朗品牌字距与浅灰提示形成层次，不引入新的字体或位图。
     // Center measured advances; tracked branding and a muted caption add hierarchy without new fonts or bitmaps.
@@ -187,11 +190,8 @@ void app_main(void) {
     // 深睡保留屏幕已有画面：验证缓存后同时恢复前后帧，省去清白和开机图两次推屏。
     // Deep sleep retains the panel image: validate its cache and restore both references, skipping white erase and splash output.
     const bool resuming = pico_boot_has_resume() && reset == ESP_RST_DEEPSLEEP;
-    // 双击门禁始终显示锁图，不能在“准备资源”页暗中等按键。
-    // A double-press gate retains lock art rather than waiting behind the resource splash.
-    // 长按开机的硬件上电直接进应用，不先停在锁图等短按；其他复位仍保留门禁。
-    // A confirmed long-press hardware boot goes straight to the app instead of stopping on the
-    // lock art; other resets keep the gate.
+    // 非已确认硬件按键开机的双击门禁显示锁图，不能在准备资源页暗中等按键。
+    // Double-press gates outside confirmed hardware-key boots retain lock art instead of waiting behind the resource splash.
     const bool retain_lock = (pico_boot_has_resume() || pico_boot_lock_pending()) &&
         (reset != ESP_RST_POWERON || !metalio_boot_power_key());
     (void)prepare_startup_frame(&hl,framebuffer,retain_lock,vcom_ok);
@@ -254,6 +254,8 @@ void app_main(void) {
         else app_font_activate_system();
     }
     rp_boot_mark("resume");
+    // 首次引导服从现有密码/异常启动门禁，老配置不会重新触发。/ Setup retains PIN/crash gates and never reopens for legacy profiles.
+    if(first==app_home_page()&&!lock_pin_enabled()&&app_setup_pending())first=&app_onboarding;
 #ifdef KIIKO_LOCAL_TRANSFER_START
     // Explicit unattended local tests only; preserve PIN and recovery gates.
     if (!lock_pin_enabled() && first == app_home_page()) {

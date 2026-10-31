@@ -4,6 +4,9 @@
  * 中文：有界 UTF-8 编辑；移动与退格不切断中文或四字节字符。
  * English: Bounded UTF-8 editing; movement and backspace keep Chinese and four-byte characters intact.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_text_edit.h"
 #include <string.h>
 

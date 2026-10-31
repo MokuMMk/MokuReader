@@ -2,6 +2,9 @@
  * 中文：忠实移植确认的时钟；表盘逐行解码，指针按原形状光栅化，秒针只重画脏区。
  * English: Port the approved clocks faithfully; decode faces by row, rasterize original hands and redraw only dirty seconds.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_home_clock.h"
 #include "ui_home_clock_assets.h"
 #include "ui_home_clock_new_assets.h"
@@ -12,7 +15,7 @@
 #include <stdlib.h>
 #define TAU 6.28318530718f
 typedef struct {uint8_t *fb;EpdRect bounds,clip;bool binary;unsigned phase,trail_start,trail_steps;ui_home_clock_style_t style;bool preview;} clock_canvas_t;
-typedef struct {EpdRect bounds,clip;int year,month,day,hour,minute,rotation;bool binary,valid;unsigned age;ui_home_clock_style_t style;bool preview;} clock_base_key_t;
+typedef struct {EpdRect bounds,clip;int year,month,day,hour,minute,rotation;bool binary,valid,english;unsigned age;ui_home_clock_style_t style;bool preview;} clock_base_key_t;
 static uint8_t *s_base_cache;
 static size_t s_base_cache_bytes;
 static clock_base_key_t s_base_keys[UI_HOME_CLOCK_BASE_CACHE_SLOTS];
@@ -46,6 +49,9 @@ static bool base_candidate(const clock_canvas_t *c,EpdRect *physical){
     return (size_t)physical->width*physical->height/2<=UI_HOME_CLOCK_BASE_SLOT_BYTES;
 }
 static bool base_key_matches(const clock_base_key_t *k,const clock_canvas_t *c,const struct tm *date){
+#ifdef ESP_PLATFORM
+    if(k->english!=ui_locale_english())return false;
+#endif
     return k->valid&&k->preview==c->preview&&k->style==c->style&&((c->style==UI_HOME_CLOCK_HOUSE||c->style==UI_HOME_CLOCK_PS1995)||(k->year==date->tm_year&&k->month==date->tm_mon&&k->day==date->tm_mday&&k->hour==date->tm_hour&&k->minute==date->tm_min))&&k->binary==c->binary&&
         k->rotation==epd_get_rotation()&&!memcmp(&k->bounds,&c->bounds,sizeof(EpdRect))&&inside(c->clip,k->clip);
 }
@@ -93,6 +99,9 @@ static void base_store(clock_canvas_t *c,const struct tm *date){
     base_copy(c,p,i,false);
     s_base_keys[i]=(clock_base_key_t){.bounds=c->bounds,.clip=c->clip,.year=date->tm_year,.month=date->tm_mon,.day=date->tm_mday,.hour=date->tm_hour,.minute=date->tm_min,
         .rotation=epd_get_rotation(),.binary=c->binary,.valid=true,.age=++s_base_age,.style=c->style,.preview=c->preview};
+#ifdef ESP_PLATFORM
+    s_base_keys[i].english=ui_locale_english();
+#endif
 }
 static float clamp(float x,float lo,float hi){return fminf(hi,fmaxf(lo,x));}
 static EpdRect intersect(EpdRect a,EpdRect b){

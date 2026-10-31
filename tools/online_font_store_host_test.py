@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--fonts-dir',type=Path)
+p.add_argument('--setup-font',type=Path)
 args=p.parse_args()
 (ROOT/'build').mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(dir=ROOT/'build',prefix='font-store-') as tmp:
@@ -53,7 +54,7 @@ static void hash_file(const char *path,uint8_t digest[32],uint32_t *size){
 }
 int main(int argc,char **argv){
  assert(argc==5);const char *mode=argv[1],*source=argv[2],*dir=argv[3];int index=atoi(argv[4]);
- online_font_item_t item=s_fonts[index];bool catalog=!strcmp(mode,"catalog")||!strcmp(mode,"zipcancel");
+ online_font_item_t item=index==ONLINE_FONT_SETUP_INDEX?s_setup_font:s_fonts[index];bool catalog=!strcmp(mode,"catalog")||!strcmp(mode,"zipcancel");
  if(!catalog){item.filename="kiiko-test.ttf";item.license="Copyright test\nSIL OPEN FONT LICENSE Version 1.1\n";
   item.deflate_offset=item.deflate_size=0;hash_file(source,item.sha256,&item.size);item.source_size=item.size;memcpy(item.source_sha256,item.sha256,32);}
  char target[512],notice[540],temp[512];snprintf(target,sizeof(target),"%s/%s",dir,item.filename);
@@ -86,6 +87,9 @@ int main(int argc,char **argv){
         if mode=='malformed':source.write_bytes(bytes(2048))
         else:shutil.copyfile(ROOT/'main/assets/builtin.ttf',source)
         subprocess.run([str(w/'test'),mode,str(source),str(d),'0'],check=True,stdout=subprocess.DEVNULL)
+    if args.setup_font:
+        d=w/'setup';d.mkdir();source=d/'source.part';shutil.copyfile(args.setup_font,source)
+        subprocess.run([str(w/'test'),'catalog',str(source),str(d),'5'],check=True)
     if args.fonts_dir:
         catalog=json.loads((ROOT/'main/font/online_fonts.json').read_text())
         for i,item in enumerate(catalog):

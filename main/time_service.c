@@ -2,6 +2,9 @@
  * 中文：S3 RTC 离线走时；在线每小时校准，离线每六小时短连已保存 WiFi。
  * English: S3 RTC keeps offline time; calibrate hourly online or briefly every six hours offline.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "time_service.h"
 #include <stdatomic.h>
 #include <stdint.h>
@@ -20,7 +23,7 @@
 #define CLOCK_OFFLINE_INTERVAL (6ULL * 3600)
 #define CLOCK_RETRY_US (5LL * 60 * 1000000)
 static atomic_bool s_running;
-static bool s_loaded;
+static bool s_loaded,s_force_online,s_online_pending;
 static uint64_t s_last_sync;
 static int64_t s_next_attempt_us = 15000000;
 
@@ -32,6 +35,12 @@ static void clock_worker(void *arg) {
     atomic_store(&s_running, false);
     vTaskDelete(NULL);
 }
+
+void app_time_service_request_online_sync(void){
+    s_online_pending=true;
+    if(!atomic_load(&s_running)){s_force_online=true;s_next_attempt_us=0;}
+}
+bool app_time_service_online_sync_pending(void){return s_online_pending;}
 
 void app_time_service_poll(bool idle) {
     if (!idle) return;
@@ -64,16 +73,18 @@ void app_time_service_poll(bool idle) {
             nvs_close(handle);
         }
     }
+    if(s_online_pending&&!s_force_online&&!atomic_load(&s_running))s_online_pending=false;
     const int64_t monotonic = esp_timer_get_time();
     if (atomic_load(&s_running) || monotonic < s_next_attempt_us) return;
     read_pico_transfer_status_t status;
     read_pico_transfer_get_status(&status);
     bool online = status.state == READ_PICO_TRANSFER_READY &&
                   status.mode == READ_PICO_TRANSFER_MODE_STA && status.network_ready;
+    if(s_force_online&&!online)return;
     if (!online && status.state != READ_PICO_TRANSFER_STOPPED) return;
     time_t now = time(NULL);
     uint64_t interval = online ? CLOCK_ONLINE_INTERVAL : CLOCK_OFFLINE_INTERVAL;
-    if (now >= (time_t)s_last_sync && s_last_sync && (uint64_t)now - s_last_sync < interval) return;
+    if (!s_force_online&&now >= (time_t)s_last_sync && s_last_sync && (uint64_t)now - s_last_sync < interval) return;
     s_next_attempt_us = monotonic + CLOCK_RETRY_US;
     if (!online) {
         char ssid[33]; bool configured = false;
@@ -85,5 +96,5 @@ void app_time_service_poll(bool idle) {
     if (xTaskCreate(clock_worker, "rtc_sync", 6144, NULL, 1, NULL) != pdPASS) {
         atomic_store(&s_running, false);
         ESP_LOGW("clock", "background calibration deferred: no task memory");
-    }
+    }else s_force_online=false;
 }

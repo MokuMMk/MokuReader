@@ -97,13 +97,14 @@ COMMON_ICONS = (
     "animate-circle-chevron-left", # AnimateIcons / shared back
     "animate-bookmark-plus", # 阅读题头已收藏 / saved reader-header favorite
     "x",                 # 电源弹窗·取消 / power dialog, cancel
+    "hard-drive", "file-image", "usb", "folder-input", "trash", "layout-grid", "search", # 文件管理 / file hub
 )
 
 def icons_for_board(board):
     if board not in ('pico', 'metalio47'):
         raise ValueError('Unknown board: ' + board)
     split = COMMON_ICONS.index('pager-chevron-first')
-    extra = ('sun', 'thermometer', 'lightbulb') if board == 'metalio47' else ()
+    extra = ('sun', 'thermometer', 'lightbulb') if board == 'metalio47' else ('timer',)
     return COMMON_ICONS[:split] + extra + COMMON_ICONS[split:]
 
 ICONS = icons_for_board(DEFAULT_BOARD)

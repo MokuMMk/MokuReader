@@ -19,7 +19,7 @@ unit = r'''
 #include "book/book_file_path.h"
 typedef struct {int x,y,width,height;} EpdRect;
 typedef struct {int64_t now_ms;int leaf;} app_ctx_t;
-typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE} app_redraw_t;
+typedef enum {APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL} app_redraw_t;
 enum {READING,TOC,SHELF,READER_PANEL_NONE,READER_PANEL_TOOLS};
 #define BOOK_TOC_ROWS 7
 #define MODE_GL16 1
@@ -38,7 +38,8 @@ static uint8_t *s_zoom_bits;
 static struct {bool pending;} s_reader_tap;
 static const char *s_text="text";
 static size_t s_text_len=900,s_block_count,s_chapter,s_page,s_jump_offset;
-static void *s_blocks;
+typedef struct {int image;unsigned image_width,image_height;} blk_t;
+static blk_t *s_blocks;
 static int s_px=48,s_reader_panel=READER_PANEL_NONE,s_reader_slider=-1,s_view=READING;
 #define s_toolbar (s_reader_panel!=READER_PANEL_NONE)
 static bool s_reader_fullscreen,s_clear_confirm,s_reader_text_frame,s_reader_turn_pending;
@@ -56,7 +57,29 @@ static void lock_draw(void){assert(!draw_locked);draw_locked=true;}
 static void unlock_draw(void){assert(draw_locked);draw_locked=false;}
 static void invalidate_prep(void){}
 static void refresh_chapter_lead(void){}
-static EpdRect body_rect(void){return(EpdRect){0,0,684,s_reader_fullscreen?150:100};}
+static bool immersive,persisted_immersive,hide_images,vertical,power_turn;
+static unsigned style_saves;
+static bool app_settings_reader_immersive(void){return immersive;}
+static void app_settings_set_reader_immersive(bool v){immersive=persisted_immersive=v;++style_saves;}
+static bool app_settings_reader_hide_images(void){return hide_images;}
+static void app_settings_set_reader_hide_images(bool v){hide_images=v;}
+static void book_layout_set_images_visible(bool v){(void)v;}
+static bool app_settings_book_vertical(void){return vertical;}
+static void app_settings_set_book_vertical(bool v){vertical=v;}
+static void book_layout_set_vertical(bool v){(void)v;}
+static bool app_settings_reader_power_turn(void){return power_turn;}
+static void app_settings_set_reader_power_turn(bool v){power_turn=v;}
+static EpdRect body_rect(void){return(EpdRect){0,0,684,s_reader_fullscreen?(app_settings_reader_immersive()?180:150):100};}
+static char s_chapter_heading_title[8],s_chapter_heading_label[8],s_reader_notice[128];
+static size_t s_chapter_lead_skip,s_image_count;static unsigned s_chapter_lead_row_height;
+static bool s_reader_footer_pending,s_reader_image_refresh_pending;
+static int64_t s_reader_notice_until;
+static void *s_images[1];
+static int book_chapter_image_dimensions(size_t ch,void *image,unsigned *w,unsigned *h){(void)ch;(void)image;*w=*h=1;return 0;}
+#define ESP_OK 0
+static void vTaskDelay(int ticks){(void)ticks;}
+static int64_t esp_timer_get_time(void){return 1000;}
+static void apply_chapter_lead(const char*t,const char*l,size_t skip,unsigned h){(void)t;(void)l;(void)skip;(void)h;assert(draw_locked);}
 static size_t book_layout_page_start_offset(size_t page){return page*layout_span;}
 static size_t book_layout_page_for_offset(size_t off){return off/layout_span;}
 static size_t book_layout_page_count(void){return (s_text_len+layout_span-1)/layout_span;}
@@ -93,11 +116,11 @@ static void book_layout_set_first_line_indent_adjust(int px){assert(draw_locked)
 """
 unit += function('apply_reader_indent', BOOK) + '\n'
 for name in ('reader_zoom_reset', 'app_book_request_open', 'app_book_request_open_from_home', 'app_book_request_resume',
-             'toggle_reader_fullscreen', 'reader_turn_chrome', 'turn_page'):
+             'toggle_reader_fullscreen', 'apply_reader_option', 'reader_turn_chrome', 'turn_page'):
     unit += function(name, BOOK) + '\n'
 unit += r'''
 static void reset(bool full,bool tools,size_t page,size_t chapter){
- s_text="text";s_view=READING;s_reader_fullscreen=full;layout_span=full?150:100;s_page=page;s_chapter=chapter;
+ immersive=persisted_immersive=false;style_saves=0;s_text="text";s_view=READING;s_reader_fullscreen=full;layout_span=full?150:100;s_page=page;s_chapter=chapter;
  s_reader_panel=tools?READER_PANEL_TOOLS:READER_PANEL_NONE;s_reader_slider=2;
  reflows=paints=saves=s_stats_pending_turns=s_session_turns=s_turns=s_unsaved=0;
  failed_reflows=0;load_failed=false;full_pages=0;s_reader_text_frame=true;
@@ -115,9 +138,9 @@ int main(void){
  assert(apply_reader_indent(&ctx,2,101)==APP_REDRAW_NONE&&saves==1);
  assert(apply_reader_indent(&ctx,2,-101)==APP_REDRAW_NONE&&saves==1);
 
- assert(app_book_request_open("/sdcard/book.epub")&&s_requested_fullscreen&&!s_requested_open_home);
+ assert(app_book_request_open("/sdcard/book.epub")&&!s_requested_fullscreen&&!s_requested_open_home);
  assert(app_book_request_resume("/sdcard/book.epub",false)&&!s_requested_fullscreen&&s_requested_open_home);
- assert(app_book_request_open_from_home("/sdcard/other.epub")&&s_requested_fullscreen);
+ assert(app_book_request_open_from_home("/sdcard/other.epub")&&!s_requested_fullscreen);
  assert(!app_book_request_open(NULL)&&!app_book_request_open(""));
  for(int full=0;full<2;++full)for(int tools=0;tools<2;++tools)for(int dir=-1;dir<=1;dir+=2){
   reset(full,tools,2,0);size_t destination=book_layout_page_start_offset(s_page+dir);
@@ -127,12 +150,12 @@ int main(void){
   app_redraw_t r=turn_page(&ctx,dir);
   assert(!s_zoom_bits&&!s_zoom_bits_bytes&&!s_zoom_active&&!s_image_pan_active&&!s_image_zoom_bw&&!s_reader_tap.pending);
   assert(s_zoom_slot==-1&&s_image_zoom==READER_IMAGE_ZOOM_MIN&&s_image_zoom_page==SIZE_MAX&&!s_image_zoom_start_distance);
-  assert(s_reader_fullscreen&&s_reader_panel==READER_PANEL_NONE&&s_reader_slider==-1);
+  assert(s_reader_fullscreen==!!full&&s_reader_panel==READER_PANEL_NONE&&s_reader_slider==-1);
   assert(s_stats_pending_turns==1&&s_session_turns==1&&paints==1);
   assert(book_layout_page_start_offset(s_page)<=destination&&destination<book_layout_page_start_offset(s_page)+layout_span);
-  assert(reflows==(unsigned)!full);
-  assert(r==((!full||tools)?APP_REDRAW_PAGE:APP_REDRAW_AREA));
-  assert(s_water_turn_pending==!!(full&&!tools));
+  assert(!reflows);
+  assert(r==(tools?APP_REDRAW_PAGE:APP_REDRAW_AREA));
+  assert(s_water_turn_pending==!tools);
  }
  // 普通文字恢复正式版的翻页与周期清屏标志。/ Restore release text-turn and periodic-cleanup state.
  effect=0;
@@ -148,17 +171,33 @@ int main(void){
  assert(turn_page(&ctx,1)==APP_REDRAW_AREA&&!s_water_turn_pending&&!s_reader_turn_pending);
  test_images=0;
  reset(false,true,0,0);assert(turn_page(&ctx,-1)==APP_REDRAW_PAGE);
- assert(s_reader_fullscreen&&!s_toolbar&&s_page==0&&!paints&&!s_stats_pending_turns);
+ assert(!s_reader_fullscreen&&!s_toolbar&&s_page==0&&!paints&&!s_stats_pending_turns);
  reset(false,true,8,1);assert(turn_page(&ctx,1)==APP_REDRAW_PAGE);
- assert(s_reader_fullscreen&&!s_toolbar&&s_page==5&&!s_stats_pending_turns);
+ assert(!s_reader_fullscreen&&!s_toolbar&&s_page==8&&!s_stats_pending_turns);
  reset(true,true,5,1);assert(turn_page(&ctx,1)==APP_REDRAW_PAGE&&!s_toolbar&&!reflows);
- reset(false,true,8,0);assert(turn_page(&ctx,1)==APP_REDRAW_PAGE&&s_chapter==1&&s_page==0&&s_reader_fullscreen);
- reset(false,true,0,1);assert(turn_page(&ctx,-1)==APP_REDRAW_PAGE&&s_chapter==0&&s_page==5&&s_reader_fullscreen);
+ reset(false,true,8,0);assert(turn_page(&ctx,1)==APP_REDRAW_PAGE&&s_chapter==1&&s_page==0&&!s_reader_fullscreen);
+ reset(false,true,0,1);assert(turn_page(&ctx,-1)==APP_REDRAW_PAGE&&s_chapter==0&&s_page==8&&!s_reader_fullscreen);
  reset(false,true,8,0);load_failed=true;assert(turn_page(&ctx,1)==APP_REDRAW_PAGE&&s_view==TOC&&!paints&&!s_stats_pending_turns);
- reset(false,true,2,0);failed_reflows=1;assert(turn_page(&ctx,1)==APP_REDRAW_PAGE);
- assert(s_text&&!s_reader_fullscreen&&!s_toolbar&&layout_span==100&&s_page==3&&reflows==2);
- reset(false,true,2,0);failed_reflows=2;assert(turn_page(&ctx,1)==APP_REDRAW_PAGE);
+ // Explicit mode changes retain the anchor and roll back failed pagination; turns never reflow.
+ reset(false,true,2,0);assert(toggle_reader_fullscreen(&ctx)==APP_REDRAW_FULL);
+ assert(s_reader_fullscreen&&s_page==1&&layout_span==150&&reflows==1&&saves==1);
+ assert(toggle_reader_fullscreen(&ctx)==APP_REDRAW_FULL&&!s_reader_fullscreen&&s_page==1&&layout_span==100);
+ reset(false,true,2,0);failed_reflows=1;assert(toggle_reader_fullscreen(&ctx)==APP_REDRAW_NONE);
+ assert(s_text&&!s_reader_fullscreen&&layout_span==100&&s_page==2&&reflows==2&&!saves);
+ reset(false,true,2,0);failed_reflows=2;assert(toggle_reader_fullscreen(&ctx)==APP_REDRAW_PAGE);
  assert(!s_text&&s_view==SHELF&&!paints&&!s_stats_pending_turns&&s_message[0]);
+ // 沉浸偏好独立保存：非全屏不重排，全屏改样式保留字节锚点。/ Persist style independently: no nonfullscreen reflow; preserve fullscreen byte anchors.
+ reset(false,true,2,0);assert(apply_reader_option(&ctx,1)==APP_REDRAW_PAGE);
+ assert(!s_reader_fullscreen&&immersive&&persisted_immersive&&style_saves==1&&!reflows&&s_page==2);
+ assert(toggle_reader_fullscreen(&ctx)==APP_REDRAW_FULL&&s_reader_fullscreen&&immersive&&layout_span==180&&s_page==1&&style_saves==1);
+ assert(toggle_reader_fullscreen(&ctx)==APP_REDRAW_FULL&&!s_reader_fullscreen&&immersive&&style_saves==1);
+ reset(true,true,2,0);size_t style_anchor=book_layout_page_start_offset(s_page);
+ assert(apply_reader_option(&ctx,1)==APP_REDRAW_FULL&&s_reader_fullscreen&&immersive&&persisted_immersive);
+ assert(book_layout_page_start_offset(s_page)<=style_anchor&&style_anchor<book_layout_page_start_offset(s_page)+layout_span&&layout_span==180&&s_reader_panel==READER_PANEL_TOOLS);
+ reset(true,true,2,0);failed_reflows=1;
+ assert(apply_reader_option(&ctx,1)==APP_REDRAW_PAGE&&s_reader_fullscreen&&!immersive&&!persisted_immersive&&s_page==2&&layout_span==150&&reflows==2&&!saves);
+ reset(true,true,2,0);failed_reflows=2;
+ assert(apply_reader_option(&ctx,1)==APP_REDRAW_PAGE&&!s_text&&s_view==SHELF&&!immersive&&!persisted_immersive);
  // 速读黑白严格使用Pico既有0/5/10/15/30间隔，没有隐藏十页清理上限。
  // Fast BW uses Pico's existing0/5/10/15/30 intervals without a hidden ten-turn cap.
  const unsigned intervals[]={0,5,10,15,30};effect=2;
@@ -170,7 +209,7 @@ int main(void){
    assert(s_reader_cleanup==(full_pages&&n%full_pages==0));
   }
  }
- puts("PASS: native full-screen entry and explicit sleep overrides; old-layout destination anchors; toolbar dismissal; chapter/boundary turns; failed reflow restores safely or returns to the shelf");
+ puts("PASS: standard entry and explicit sleep overrides; mode-preserving destination anchors; toolbar dismissal; chapter/boundary turns; failed reflow restores safely or returns to the shelf");
 }
 '''
 with tempfile.TemporaryDirectory(dir=ROOT / 'build') as folder:

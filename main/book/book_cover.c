@@ -422,9 +422,9 @@ bool book_image_grayscale(const uint8_t *data, size_t size, bool png,
 
 #define COVER_CACHE_MAGIC UINT32_C(0x52435041)
 #if KIIKO_BOARD_METALIO47
-#define COVER_CACHE_SCHEMA 2u
+#define COVER_CACHE_SCHEMA 3u
 #else
-#define COVER_CACHE_SCHEMA 1u
+#define COVER_CACHE_SCHEMA 2u
 #endif
 
 typedef struct {
@@ -465,7 +465,7 @@ static bool cover_cache_key(const char *source, const char *title, const char *a
 #if KIIKO_BOARD_METALIO47
 static metalio_cover_key_t ram_key(const cover_cache_header_t *key,uint64_t variant) {
     return (metalio_cover_key_t){.field={key->path_hash,key->text_hash,key->file_size,
-        (uint64_t)key->modified,variant,key->template_version,0,0}};
+        (uint64_t)key->modified,variant,key->template_version,key->schema,0}};
 }
 #else
 #endif

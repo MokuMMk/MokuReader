@@ -1,3 +1,6 @@
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "esp_timer.h"
 #ifdef KIIKO_LOCAL_LATENCY
 #include "esp_log.h"

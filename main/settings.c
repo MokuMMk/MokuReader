@@ -14,7 +14,11 @@
  * partition is not erased.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "settings.h"
+#include "setup_state.h"
 #include "kiiko_board_config.h"
 #define READER_TURN_EFFECT_MAX KIIKO_BOARD_READER_TURN_EFFECT_MAX
 static bool reader_full_pages_valid(uint8_t pages) {
@@ -153,6 +157,7 @@ static bool s_ble_turner;
 static app_ai_action_t s_ai_short=APP_AI_REFRESH;
 #endif
 static bool s_shelf_recent_sort;
+static uint8_t s_shelf_order;
 // 书内自带字体默认开启：多数带字体的书排版就是靠它才对得上版。
 // Embedded book faces are on by default: most books that ship a face only typeset correctly
 // with it.
@@ -221,6 +226,7 @@ void app_settings_init(void) {
         return;
     }
 
+    app_setup_init();
     nvs_handle_t h;
     if (nvs_open(NVS_NS, NVS_READONLY, &h) != ESP_OK) return;
     uint8_t raw = APP_SLEEP_DEEP;
@@ -359,7 +365,9 @@ void app_settings_init(void) {
     uint8_t ai_short=APP_AI_REFRESH;
     s_ai_short=nvs_get_u8(h,"ai_short",&ai_short)==ESP_OK&&ai_short<APP_AI_ACTION_COUNT?(app_ai_action_t)ai_short:APP_AI_REFRESH;
 #endif
-    if (nvs_get_u8(h, NVS_KEY_SHELF_RECENT, &recent_sort) == ESP_OK) s_shelf_recent_sort = recent_sort == 1;
+    s_shelf_order = 0;
+    if (nvs_get_u8(h, NVS_KEY_SHELF_RECENT, &recent_sort) == ESP_OK) s_shelf_order = recent_sort < 6 ? recent_sort : 0;
+    s_shelf_recent_sort = s_shelf_order == 1 || s_shelf_order == 3;
     if (nvs_get_u8(h, NVS_KEY_BOOK_FONTS, &book_fonts) == ESP_OK) s_book_fonts = book_fonts == 1;
     if (nvs_get_u8(h, NVS_KEY_BOOK_VERTICAL, &book_vertical) == ESP_OK) s_book_vertical = book_vertical == 1;
     s_book_tracking = -APP_BOOK_TRACK_MIN;
@@ -848,10 +856,15 @@ void app_settings_set_ble_turner(bool on) {
     nvs_put_u8(NVS_KEY_BLE_TURNER, on ? 1 : 0);
 }
 bool app_settings_shelf_recent_sort(void) { return s_shelf_recent_sort; }
+uint8_t app_settings_shelf_order(void) { return s_shelf_order; }
+void app_settings_set_shelf_order(uint8_t order) {
+    if (order >= 6 || order == s_shelf_order) return;
+    s_shelf_order = order;
+    s_shelf_recent_sort = order == 1 || order == 3;
+    nvs_put_u8(NVS_KEY_SHELF_RECENT, order);
+}
 void app_settings_set_shelf_recent_sort(bool on) {
-    if (s_shelf_recent_sort == on) return;
-    s_shelf_recent_sort = on;
-    nvs_put_u8(NVS_KEY_SHELF_RECENT, on ? 1 : 0);
+    app_settings_set_shelf_order(on ? 1 : 0);
 }
 uint8_t app_settings_book_tracking(void) { return s_book_tracking; }
 void app_settings_set_book_tracking(uint8_t index) {
@@ -1481,6 +1494,7 @@ esp_err_t app_settings_backup_restore(void) {
     s_main_refresh = main_refresh;
     s_reader_hide_images = (profile.home_full_refresh & 2) != 0;
     s_shelf_recent_sort = (profile.home_full_refresh & 4) != 0;
+    s_shelf_order = s_shelf_recent_sort ? 1 : 0;
     strlcpy(s_device_name, profile.device_name, sizeof(s_device_name));
     strlcpy(s_avatar, profile.avatar, sizeof(s_avatar));
     strlcpy(s_status_signature, profile.status_signature, sizeof(s_status_signature));

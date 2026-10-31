@@ -27,6 +27,10 @@
  * 用户2026-10-21修订：设置列表滚动保留文字抗锯齿和灰阶头像，撤掉书架额外四相补白，列表仍一次输出且不影响固定底栏。
  * User revision2026-10-21: keep AA text and gray avatars during list scrolls, omit the shelf's four added white phases, and retain one output with fixed navigation.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
+#include "setup_state.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "esp_heap_caps.h"
@@ -58,6 +62,7 @@
 #include "app_font_context.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
+#include "ui_root_style.h"
 #include "ui_text_input.h"
 #include "ui_keyboard.h"
 #include "ui_nav.h"
@@ -88,7 +93,7 @@ typedef enum { SETTINGS_MAIN, SETTINGS_WIFI, SETTINGS_TIME,
                SETTINGS_CONFIG, SETTINGS_UPGRADE, SETTINGS_BOOT, SETTINGS_FACTORY_RESET,
                SETTINGS_POWER_SLEEP, SETTINGS_AUTO_LOCK, SETTINGS_PROFILE, SETTINGS_AVATAR,
                SETTINGS_BLUETOOTH, SETTINGS_BLE_SCAN,
-               SETTINGS_LOCK_PIN, SETTINGS_PIN_ENTRY, SETTINGS_TEXT_EDIT } settings_page_t;
+               SETTINGS_LOCK_PIN, SETTINGS_PIN_ENTRY, SETTINGS_TEXT_EDIT, SETTINGS_LANGUAGE } settings_page_t;
 static settings_page_t s_page;
 static int settings_content_end(void) {
     return UI_NAV_REFRESH_END;
@@ -330,7 +335,7 @@ static int settings_main_row_height(void) {
 }
 #define SETTINGS_ROW_H settings_main_row_height()
 #define SETTINGS_WIRELESS_ROWS 3
-#define SETTINGS_DISPLAY_ROWS 7
+#define SETTINGS_DISPLAY_ROWS 8
 #define SETTINGS_PERSONAL_ROWS 4
 #define SETTINGS_MAINTENANCE_ROWS 5
 #define SETTINGS_WIRELESS_Y (180 + settings_profile_height() + 77)
@@ -887,6 +892,7 @@ static void render_content(app_ctx_t *ctx, uint8_t *fb) {
     (void)ctx;
     if (s_page == SETTINGS_PIN_ENTRY) { ui_pinpad_paint(fb, &s_pinpad, ui_pinpad_full()); return; }
     ui_clear_page(fb);
+    if(s_page==SETTINGS_MAIN)ui_root_background(fb);
     if (s_page == SETTINGS_FACTORY_RESET) {
         ui_nav_status(fb);
         back_header(fb,"恢复出厂设置");
@@ -986,12 +992,23 @@ static void render_content(app_ctx_t *ctx, uint8_t *fb) {
         settings_navigation(fb);
         return;
     }
+    if(s_page==SETTINGS_LANGUAGE){
+        back_header(fb,"语言");
+        const char *labels[]={"简体中文","English"};
+        for(int i=0;i<2;++i){EpdRect rect={36,300+i*154,612,122};
+            ui_draw_choice_round_rect(fb,rect,22,app_setup_english()==(i==1));
+            ui_text_box(fb,ui_inset_rect(rect,20),34,labels[i],EPD_DRAW_ALIGN_CENTER,app_setup_english()==(i==1));
+        }
+        ui_text_box(fb,(EpdRect){36,642,612,88},24,"仅切换系统语言，书籍和输入内容保留原文",EPD_DRAW_ALIGN_CENTER,false);
+        if(s_notice[0])ui_text_box(fb,(EpdRect){36,778,612,80},23,s_notice,EPD_DRAW_ALIGN_CENTER,false);
+        settings_navigation(fb);return;
+    }
     if (s_page == SETTINGS_TIME_EDIT) {
         ui_nav_back(fb, 36, 79);
         ui_text(fb, 36, 151, 47, "日期与时间", EPD_DRAW_ALIGN_LEFT, false);
         ui_text(fb, 36, 216, 23, "北京时间 · UTC+8", EPD_DRAW_ALIGN_LEFT, false);
         ui_hairline(fb, 259, 36, 612, UI_GRAY_LIGHT);
-        static const char *const labels[] = {"年", "月", "日", "时", "分"};
+        static const char *const labels[] = {"年", "月", "日期", "时", "分"};
         int values[] = {s_year, s_month, s_day, s_hour, s_minute};
         for (int i = 0; i < 5; ++i) {
             int x = 36 + i * 122;
@@ -1448,12 +1465,12 @@ static void render_content(app_ctx_t *ctx, uint8_t *fb) {
     snprintf(font_name,sizeof(font_name),"%s · %u%%",system_font_label(app_settings_system_font_path()),app_settings_system_font_size());
     snprintf(contrast,sizeof(contrast),"%u%%",app_settings_system_contrast());
     unsigned minutes=app_settings_auto_lock_minutes();
-    if(minutes)snprintf(idle,sizeof(idle),"%u 分钟",minutes);else strcpy(idle,"关闭");
-    const char *display_labels[]={"系统字体","系统对比度","主页刷新模式","首页强刷","自动休眠锁屏","双击解锁","关机睡眠"};
+    if(minutes)snprintf(idle,sizeof(idle),"%u 分钟",minutes);else snprintf(idle,sizeof(idle),"%s","关闭");
+    const char *display_labels[]={"系统字体","系统对比度","主页刷新模式","首页强刷","自动休眠锁屏","双击解锁","关机睡眠","语言"};
     const char *display_values[]={font_name,contrast,
         app_settings_main_refresh_mode()==APP_MAIN_REFRESH_FAST?"快刷":app_settings_main_refresh_mode()==APP_MAIN_REFRESH_WATER?"水波纹":"普通",
-        app_settings_home_full_refresh()?"开启":"关闭",idle,"",app_settings_staged_shutdown()?"先浅后深":"彻底断电"};
-    const int display_icons[]={2,7,15,11,14,SETTINGS_UNLOCK_ICON,9};
+        app_settings_home_full_refresh()?"开启":"关闭",idle,"",app_settings_staged_shutdown()?"先浅后深":"彻底断电",app_setup_english()?"English":"简体中文"};
+    const int display_icons[]={2,7,15,11,14,SETTINGS_UNLOCK_ICON,9,2};
     setting_group(fb,SETTINGS_DISPLAY_Y-49,"显示",SETTINGS_DISPLAY_Y,
                   display_icons,display_labels,display_values,SETTINGS_DISPLAY_ROWS);
     snprintf(signature,sizeof(signature),"%s",app_settings_status_signature()[0]?app_settings_status_signature():"未设置");
@@ -1974,6 +1991,13 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         s_wallpaper_confirm = false;
         return APP_REDRAW_PAGE;
     }
+    if(s_page==SETTINGS_LANGUAGE&&ev->type==UI_GESTURE_TAP){
+        if(ev->y0<190){s_page=SETTINGS_MAIN;s_notice[0]=0;return APP_REDRAW_PAGE;}
+        for(int i=0;i<2;++i)if(ui_rect_hit((EpdRect){36,300+i*154,612,122},ev->x0,ev->y0)){
+            if(app_setup_set_english(i==1)!=ESP_OK){snprintf(s_notice,sizeof(s_notice),"语言保存失败，请重试");return APP_REDRAW_PAGE;}
+            s_notice[0]=0;return APP_REDRAW_FULL;
+        }
+    }
     if (s_page == SETTINGS_TIME_EDIT) {
         if (ev->y0 < 190) { s_page = SETTINGS_TIME; return APP_REDRAW_PAGE; }
         if (ev->y0 >= 354 && ev->y0 < 597) {
@@ -2232,8 +2256,9 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
             // Switching it off explicitly clears the failure count and reason; without this a
             // self-locked stack leaves the user no way to try again.
             if (!app_settings_ble_turner()) ble_pt_reset_failure();
+            else ble_pt_reconnect_recent();
             snprintf(s_ble_notice, sizeof(s_ble_notice), "%s",
-                     app_settings_ble_turner() ? "已开启，正在等待设备" : "已关闭，蓝牙内存已释放");
+                     app_settings_ble_turner() ? "已开启，尝试连接上次设备" : "已关闭，蓝牙内存已释放");
             return APP_REDRAW_PAGE;
         }
         if (ty >= l.scan_entry_top && ty < l.scan_entry_top + BLE_ROW_H) {
@@ -2336,7 +2361,8 @@ static app_redraw_t on_gesture(app_ctx_t *ctx, const ui_gesture_event_t *ev) {
         else if(row==3)app_settings_set_home_full_refresh(!app_settings_home_full_refresh());
         else if(row==4)s_page=SETTINGS_AUTO_LOCK;
         else if(row==5)app_settings_set_wake_presses(app_settings_wake_presses()==2?1:2);
-        else s_page=SETTINGS_POWER_SLEEP;
+        else if(row==6)s_page=SETTINGS_POWER_SLEEP;
+        else s_page=SETTINGS_LANGUAGE;
         return APP_REDRAW_PAGE;
     }
     if(y>=SETTINGS_PERSONAL_Y && y<SETTINGS_PERSONAL_Y+SETTINGS_PERSONAL_ROWS*SETTINGS_ROW_H) {

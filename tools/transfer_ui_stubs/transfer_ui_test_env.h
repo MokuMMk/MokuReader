@@ -132,6 +132,7 @@ static bool test_wifi_running;
 static inline void read_pico_transfer_stop(void) { ++test_stop_count; test_wifi_running=false; }
 static inline void read_pico_transfer_get_status(read_pico_transfer_status_t* s) {*s=test_status;}
 static inline int read_pico_transfer_get_saved_wifi(char* s,bool* c) {strcpy(s,test_configured?"saved":"");*c=test_configured;return 0;}
+static inline int read_pico_transfer_select_saved_wifi(const char* ssid) {snprintf(test_saved_ssid,sizeof(test_saved_ssid),"%s",ssid);return test_configured?ESP_OK:ESP_FAIL;}
 static inline int read_pico_transfer_start(const read_pico_transfer_cfg_t* c) {if (test_wifi_running) return ESP_FAIL;if (!c->network_only && (!c->file_changed_cb || !c->wallpaper_set_cb || c->file_changed_cb("/flash/books/test.txt"))) return ESP_FAIL;return 0;}
 static inline void read_pico_transfer_service_poll(void) {}
 static inline int read_pico_transfer_save_wifi(const char* s,const char* p) {(void)p;test_save_count++;snprintf(test_saved_ssid,33,"%s",s);return test_save_error;}

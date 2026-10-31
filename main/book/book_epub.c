@@ -2075,7 +2075,7 @@ typedef struct {
     epub_meta_cache_payload_t payload;
 } metadata_scratch_t;
 typedef struct {
-    char opf[EPUB_PATH_CAP], cover_path[EPUB_PATH_CAP], href[EPUB_PATH_CAP];
+    char opf[EPUB_PATH_CAP], cover_path[EPUB_PATH_CAP], fallback[EPUB_PATH_CAP], href[EPUB_PATH_CAP];
     char cover_id[EPUB_ID_CAP], id[EPUB_ID_CAP], media[80], props[256], name[64], content[EPUB_ID_CAP];
     xml_t xml;
 } cover_scratch_t;
@@ -2129,6 +2129,15 @@ esp_err_t book_epub_metadata(const char *path, char *title, size_t title_cap, ch
     return err;
 }
 
+// 无封面声明的旧书只接受明确的封面文件名，不猜首张图片（可能是logo/广告）。
+// Undeclared legacy books accept exact cover basenames, never an arbitrary first logo/banner.
+static bool explicit_cover_name(const char *path){
+    const char *base=strrchr(path,'/');base=base?base+1:path;char name[40];size_t n=strcspn(base,".?#");
+    if(!n||n>=sizeof(name))return false;
+    for(size_t i=0;i<n;++i){unsigned char c=(unsigned char)base[i];name[i]=(char)(c>='A'&&c<='Z'?c+32:c);}name[n]=0;
+    return !strcmp(name,"cover")||!strcmp(name,"frontcover")||!strcmp(name,"front-cover")||!strcmp(name,"cover-image")||!strcmp(name,"封面");
+}
+
 esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size,
                                   bool *is_png, size_t budget) {
     if (!path || !data || !size || !is_png) return ESP_ERR_INVALID_ARG;
@@ -2146,7 +2155,7 @@ esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size
     if (err == ESP_OK) err = load_entry(book, zip_find(book->zip, scratch->opf), &xml_text, &xml_len);
     if (err == ESP_OK) {
 
-        bool cover_png = false;
+        bool cover_png = false, fallback_png = false;
         token_t t; xml_reader(&scratch->xml, xml_text, xml_len);
         while (xml_next(&scratch->xml, &t)) {
             if (t.kind == XML_OPEN && local_name(t.name, "meta")) {
@@ -2163,9 +2172,16 @@ esp_err_t book_epub_cover_bounded(const char *path, uint8_t **data, size_t *size
                 if (!attribute(t, "id", scratch->id, sizeof(scratch->id)) || !attribute(t, "href", scratch->href, sizeof(scratch->href)) ||
                     !attribute(t, "media-type", scratch->media, sizeof(scratch->media)) || !attribute(t, "properties", scratch->props, sizeof(scratch->props))) continue;
                 bool png = !strcmp(scratch->media, "image/png"), jpeg = !strcmp(scratch->media, "image/jpeg") || !strcmp(scratch->media, "image/jpg");
-                if (!(png || jpeg) || !(word(scratch->props, "cover-image") || (scratch->cover_id[0] && !strcmp(scratch->id, scratch->cover_id)))) continue;
+                if (!(png || jpeg)) continue;
+                if(!scratch->fallback[0]&&explicit_cover_name(scratch->href)&&
+                   resolve_path(scratch->opf,scratch->href,scratch->fallback))fallback_png=png;
+                if(!(word(scratch->props,"cover-image")||(scratch->cover_id[0]&&!strcmp(scratch->id,scratch->cover_id))))continue;
                 if (resolve_path(scratch->opf, scratch->href, scratch->cover_path)) { cover_png = png; break; }
             }
+        }
+        if(!scratch->xml.failed&&!scratch->cover_path[0]&&scratch->fallback[0]){
+            snprintf(scratch->cover_path,sizeof(scratch->cover_path),"%s",scratch->fallback);
+            cover_png=fallback_png;
         }
         if (!scratch->cover_path[0]) err = ESP_ERR_NOT_FOUND;
         else {

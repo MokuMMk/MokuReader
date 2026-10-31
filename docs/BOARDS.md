@@ -380,3 +380,12 @@ English: Explicit local `--pico-main-clean` remains OFF by default and scoped to
 S31 builds and CI explicitly enable `--s31-reader-panel37`. Ordinary text/image/exits retain Moku PR6's exact GL37 plus six white-target phases:43 phases,16 grays,including equal whites while equal black/grays hold. Ripple keeps its own outlet and manual/periodic cleanup keeps GC48. With GL37 disabled or allocation failure, retain every changed GL48 transition plus six whites and three release holds,57 phases,without re-driving equal black/grays.
 
 FastBW independently quantizes targets and retains the selected native DU sequence plus four white-target phases,inserted before existing trailing holds. NativeDU20 totals24; a local DU14 experiment totals18. Root DU14 maintenance,vendor tables,VCOM,power and clocks stay separate. Optical timing/flash/ghosting still require hardware comparison; phase count is not total latency.
+
+
+## 当前功能层 / Current feature layer
+
+两板共用首次引导、系统中英切换、文件递归搜索/图标视图/批量操作、书架排序与独立全屏/沉浸状态。引导及文件选择使用自己的底部操作栏，`navigation_visible` 显式决定系统导航是否占位；引导只在完成/跳过成功持久化后退出。引导通过本板 U 盘或 Wi-Fi 服务导入字体，不提供在线下载；设置保留独立在线目录。
+Both boards share setup, system localization, recursive file search/grid/batch actions, shelf sorting and independent fullscreen/immersive state. Setup and selection own their bottom action bars; `navigation_visible` controls system-navigation space. Setup exits only after a successful Finish/Skip commit and imports fonts through the board's USB/Wi-Fi service; Settings retains its separate online catalog.
+
+阅读UI决定正文和信息栏范围；调用PR59已有差分/整块出口及原阅读波形，空闲后独立更新底部信息。不重新引入旧的d74b180驱动或本地缓存保护。`tools/pr59_driver_baseline_host_test.py`核验216个底层、配置及波形文件与用户指定PR提交一致。
+Reader UI owns body/metadata bounds and calls PR59's existing difference/full-area APIs and reader waveforms, updating footer metadata after idle. Do not reintroduce the d74b180 drivers or the superseded local cache guard. The driver-baseline host test verifies216 low-level/config/waveform files against the selected PR commit.

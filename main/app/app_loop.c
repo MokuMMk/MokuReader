@@ -48,6 +48,9 @@
  * User revision2026-10-21: children retain gray navigation; content right-swipes reuse reading recognition without left-edge or extra angle restrictions. Keyboards keep their gestures; back reuses cleanup and one board-local LTR ripple.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "app_loop.h"
 #if KIIKO_BOARD_METALIO47
 #include "anti_fade.h"
@@ -89,6 +92,7 @@
 #include "app_font_context.h"
 #include "ui_kit.h"
 #include "ui_menu.h"
+#include "setup_state.h"
 #include "ui_nav.h"
 #include "ui_gesture.h"
 #include "ui_power_dialog.h"
@@ -372,6 +376,7 @@ static void quick_toggle_wifi(void) {
 }
 static bool main_page_ready(app_ctx_t* ctx, const app_desc_t* app);
 static bool navigation_page_ready(app_ctx_t* ctx,const app_desc_t* app) {
+    if(app->navigation_visible&&!app->navigation_visible(ctx))return false;
     return app->persistent_navigation || main_page_ready(ctx,app);
 }
 static bool navigation_input_ready(app_ctx_t* ctx,const app_desc_t* app) {
@@ -394,7 +399,19 @@ static bool app_binary_ui(app_ctx_t *ctx,const app_desc_t *app) {
     return app->binary_ui && (!app->grayscale_ui || !app->grayscale_ui(ctx));
 }
 #endif
+// 引导出口只接受已经持久化的完成/跳过，子页返回仍由引导拥有。
+// Setup owns child returns and accepts global exits only after persisted Finish/Skip.
+static void setup_navigation_guard(app_ctx_t *ctx,const app_desc_t *current){
+    if(!current->setup_flow)return;
+    ctx->request_return=false;ctx->request_menu=false;
+    if(ctx->request_app&&!ctx->request_app->setup_flow&&app_setup_pending())ctx->request_app=NULL;
+}
 static void app_present_impl(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t redraw) {
+    // 文件根页/目录沿用主页擦白，其他结构变化保持原有底栏清理。
+    // File hub/directory transitions reuse root white maintenance; other structural changes retain footer cleanup.
+    const bool child_transition=redraw==APP_REDRAW_PAGE && s_presented_main==app &&
+        (s_presented_root==app)!=main_page_ready(ctx,app);
+    if(child_transition&&!app->white_child_transition)redraw=APP_REDRAW_FULL;
 #ifdef KIIKO_LOCAL_LATENCY
     const int64_t probe_start=esp_timer_get_time();
     extern int64_t local_display_elapsed_us;
@@ -472,7 +489,7 @@ static void app_present_impl(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t
 #if KIIKO_BOARD_METALIO47
         && !app_binary_ui(ctx,app)
 #endif
-        ) display_main_transition_arm(app, false, false);
+        ) display_main_transition_arm(app, false, child_transition&&app->white_child_transition);
 #if KIIKO_BOARD_METALIO47
     if(!(app->grayscale_ui&&app->grayscale_ui(ctx))&&navigation_page_ready(ctx,app)&&(app_index_of(app)==2||app_index_of(app)==3) &&
        app_settings_main_refresh_mode()!=APP_MAIN_REFRESH_WATER)display_main_transition_monochrome();
@@ -529,11 +546,14 @@ static void app_present_impl(app_ctx_t* ctx, const app_desc_t* app, app_redraw_t
 void app_present(app_ctx_t* ctx,const app_desc_t* app,app_redraw_t redraw) {
     const bool root_switch=redraw==APP_REDRAW_PAGE &&
         s_presented_root && s_presented_root!=app && main_page_ready(ctx,app);
+    const bool child_white=redraw==APP_REDRAW_PAGE && app->white_child_transition &&
+        s_presented_main==app && (s_presented_root==app)!=main_page_ready(ctx,app);
+    const bool white_switch=root_switch||child_white;
     const bool shelf_switch=root_switch &&
         (app_index_of(s_presented_root)==1 || app_index_of(app)==1);
-    unsigned prior_quality=display_main_quality_set(root_switch?(shelf_switch?8u:6u):0u);
+    unsigned prior_quality=display_main_quality_set(white_switch?(shelf_switch?8u:6u):0u);
 #if KIIKO_BOARD_METALIO47
-    bool prior_erase=display_main_switch_erase_set(root_switch);
+    bool prior_erase=display_main_switch_erase_set(white_switch);
     bool prior_home_erase=display_main_shelf_home_erase_set(root_switch &&
         app_index_of(s_presented_root)==1 && app_index_of(app)==0);
     bool previous=display_system_binary_set(app_binary_ui(ctx,app));
@@ -986,6 +1006,8 @@ bool app_poll_main_navigation(app_ctx_t *ctx) {
 }
 
 void app_loop_run(const app_loop_config_t* config) {
+    // 记忆为开启时，开机也排队重连；栈启动仍由原有无线调度控制。/ Queue startup reconnect for a persisted enabled setting; retain existing radio lifecycle control.
+    if(app_settings_ble_turner())ble_pt_reconnect_recent();
     s_media_recovery_attempts = 0; s_media_recovery_after_ms = 0;
     s_presented_main = NULL;
     s_nav_contact_down=s_nav_polled=false;
@@ -1096,7 +1118,8 @@ void app_loop_run(const app_loop_config_t* config) {
         if (ctx.now_ms - last_network_poll_ms >= 500) {
             last_network_poll_ms = ctx.now_ms;
             read_pico_transfer_service_poll();
-            app_time_service_poll(!touch.touched && ctx.now_ms - last_input_ms >= 10000 &&
+            app_time_service_poll(!touch.touched &&
+                (ctx.now_ms-last_input_ms>=10000||(current->setup_flow&&app_time_service_online_sync_pending())) &&
 #if KIIKO_BOARD_METALIO47
                 !app_sd_recovery_busy() && !current->holds_pmu && !usb_storage_active() && !app_download_active() && !pico_online_busy() && !ble_pt_connected());
 #else
@@ -1162,7 +1185,7 @@ void app_loop_run(const app_loop_config_t* config) {
         int ai_event=metalio_take_ai();
         if(ai_event || s_ai.open){
             read_pico_transfer_status_t ai_transfer;read_pico_transfer_get_status(&ai_transfer);
-            bool ai_allowed=!power_input_owned && !menu_open && !s_quick.open && !current->holds_pmu &&
+            bool ai_allowed=!current->setup_flow && !power_input_owned && !menu_open && !s_quick.open && !current->holds_pmu &&
                 current->render && !usb_storage_active() && !app_download_active() && !pico_online_busy() &&
                 ai_transfer.state!=READ_PICO_TRANSFER_UPLOADING && !ctx.request_app && !ctx.request_menu && !ctx.request_return;
             if(s_ai.open&&!ai_allowed){ai_dismiss(&ctx,current,true);ai_owned=true;}
@@ -1777,6 +1800,9 @@ void app_loop_run(const app_loop_config_t* config) {
             ctx.request_app = NULL;
             ctx.request_menu = false;
         }
+        // 只有完成/跳过已成功持久化，才允许引导请求主页；防止按键/菜单捷径绕过。
+        // Only a successfully persisted Finish/Skip may leave setup for the Home page.
+        setup_navigation_guard(&ctx,current);
         if (!power_dialog_open && (ctx.request_return || ctx.request_app || ctx.request_menu)) {
             if (!ui_click_feedback_nav_pending() && ui_click_feedback_release(ctx.fb, &click_area))
                 click_present(&ctx, current, click_area);

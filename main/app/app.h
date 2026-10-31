@@ -118,11 +118,17 @@ struct app_desc_s {
 #endif
     /// 二级系统页也保留底栏；阅读正文不继承。/ Retain navigation in system children without changing reader-body chrome.
     bool persistent_navigation;
+    /// 根页/子页结构切换复用主页擦白；手动全刷和故障恢复仍优先。/ Use root white maintenance for root/child transitions; explicit full refresh and fault recovery retain priority.
+    bool white_child_transition;
     /// 可选：保留底栏但在升级写入等不可中断阶段禁止切页。/ Optionally block navigation during noninterruptible stages such as firmware writes.
     bool (*navigation_enabled)(app_ctx_t* ctx);
+    /// 自定义操作栏替代导航时返回false；输入与刷新范围同时独立。/ False when a custom action bar replaces navigation, including its scan range.
+    bool (*navigation_visible)(app_ctx_t* ctx);
     /// 菜单关闭时接管三键，页面必须提供强刷和菜单入口。
     /// Own all three keys outside the menu; provide full refresh and menu exits.
     bool owns_keys;
+    /// 引导及其子页只能通过明确完成/跳过退出；通用快捷入口不能绕过。/ Setup and its children cannot escape through global navigation shortcuts.
+    bool setup_flow;
     /// 中键短按在抬起时执行，便于长按触发不同动作。/ Fire middle-key short action on release so a hold can differ.
     bool defer_middle_short;
     /// 可选：按当前页面决定右下角菜单把手是否响应。/ Decide whether the bottom-right menu handle is active.

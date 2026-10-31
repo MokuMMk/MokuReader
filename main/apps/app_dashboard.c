@@ -1,5 +1,8 @@
 #if defined(KIIKO_LOCAL_LATENCY) || KIIKO_BOARD_METALIO47
 #if KIIKO_BOARD_METALIO47
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "metalio_hw.h"
 #endif
 #include "esp_timer.h"
@@ -74,6 +77,7 @@
 #include "ttf_font.h"
 #include "ui_gesture.h"
 #include "ui_kit.h"
+#include "ui_root_style.h"
 #include "ui_nav.h"
 
 typedef struct {
@@ -630,13 +634,13 @@ static void render_root(uint8_t *fb) {
 #if KIIKO_BOARD_METALIO47
     const uint8_t card_gray=0xff;
 #else
-    const uint8_t card_gray=app_settings_main_fast_refresh()?0xff:0xee;
+    const uint8_t card_gray=0xff;
 #endif
-    ui_fill_round_rect(fb,(EpdRect){36,184,612,378},28,card_gray);
+    ui_root_card(fb,(EpdRect){36,184,612,378},28);
     home_frame(fb,(EpdRect){36,184,612,378},28);
     for(int side=0;side<2;++side) {
-        int x=side?648:36;epd_fill_circle(x,252,14,0xff,fb);circle_frame(fb,x,252,14);
-        ui_fill_rect_fast((EpdRect){side?x:0,237,side?36:36,30},0xff,fb);
+        int x=side?648:36;epd_fill_circle(x,252,14,UI_ROOT_GRAY,fb);circle_frame(fb,x,252,14);
+        ui_fill_rect_fast((EpdRect){side?x:0,237,side?36:36,30},UI_ROOT_GRAY,fb);
     }
     label_on(fb,60,222,24,"最近阅读",EPD_DRAW_ALIGN_LEFT,0x60,card_gray);
     if(s_excerpt[0]) {
@@ -762,7 +766,7 @@ static void render(app_ctx_t *ctx,uint8_t *fb) {
     (void)ctx;ui_clear_page(fb);ui_fill_rect_fast((EpdRect){0,0,UI_LOCK_WIDTH,UI_LOCK_HEIGHT},0xff,fb);
     if(s_view==HOME_GOAL){s_widget_trail.valid=s_time_trail.valid=false;}
     s_widget_phase=s_time_phase=clock_phase_now(&s_date);
-    if(s_view==HOME_ROOT)render_root(fb);else if(s_view==HOME_GOAL)render_goal(fb);else if(s_view==HOME_TIME)render_time(fb);else render_components(fb);
+    if(s_view==HOME_ROOT){ui_root_background(fb);ui_fill_round_rect(fb,(EpdRect){24,632,320,374},24,UI_GRAY_WHITE);ui_fill_round_rect(fb,(EpdRect){354,632,300,374},24,UI_GRAY_WHITE);render_root(fb);}else if(s_view==HOME_GOAL)render_goal(fb);else if(s_view==HOME_TIME)render_time(fb);else render_components(fb);
     if(s_press_pending && !continue_card_pressed())ui_draw_selected_round_rect(fb,s_pressed,s_pressed.width==60?30:s_pressed.width==64?32:s_pressed.width==86?43:s_pressed.height==76?38:20);
     if(s_view!=HOME_ROOT)ui_nav_draw(fb,0);
 }

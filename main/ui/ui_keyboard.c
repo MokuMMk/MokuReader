@@ -12,6 +12,9 @@
  * 用户修订：候选高频变化后在无触摸停顿时仅整理词栏，不打断连打、不全屏黑闪。
  * User revision: settle only the word strip after frequent changes and a touch-free pause, without interrupting typing or flashing the whole screen.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_keyboard.h"
 #include "ui_ime.h"
 #include <ui_kit.h>
@@ -81,7 +84,11 @@ void ui_keyboard_end(void) {
 }
 void ui_keyboard_begin(ui_text_edit_t *edit, bool ascii_only) {
     ui_keyboard_end(); s_edit = edit; s_ascii = ascii_only;
-    s_chinese = !ascii_only; s_nine = !ascii_only; s_upper = false; s_panel = 0;
+    s_chinese = !ascii_only; s_nine = !ascii_only;
+#ifdef ESP_PLATFORM
+    if(ui_locale_english())s_chinese=s_nine=false;
+#endif
+    s_upper = false; s_panel = 0;
     if (!ascii_only) s_candidates = heap_caps_malloc(sizeof(*s_candidates), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!ascii_only && !s_candidates) { s_chinese = s_nine = false; snprintf(s_notice, sizeof(s_notice), "内存不足，暂用英文键盘"); }
     refresh();

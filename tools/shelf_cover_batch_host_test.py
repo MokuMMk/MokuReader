@@ -15,7 +15,7 @@ unit=r'''
 #include <string.h>
 #include "book_cover_jobs.h"
 typedef struct{int x,y,width,height;}EpdRect;
-enum{SHELF,MANAGE};
+enum{SHELF,MANAGE,BULK};
 typedef struct{bool touched;}touch_t;
 typedef struct{int leaf;bool request_app,request_return,request_menu;int64_t now_ms;touch_t *touch;}app_ctx_t;
 #define UI_LOCK_WIDTH 684
@@ -51,7 +51,7 @@ int book_cover_jobs_take(unsigned generation,unsigned slot,book_cover_result_t *
 for name in ['prepare_cover_batch','shelf_cover_frame_ready','shelf_cover_reveal_mask','warm_shelf_lock_cover','gather_cover_entry']:
  unit+=function(name,book)+'\n'
 present=function('present',book)
-ack=present[present.index('    if ((s_view==SHELF || s_view==MANAGE) && err==EPD_DRAW_SUCCESS) {'):present.index('    if (err==EPD_DRAW_SUCCESS && reader_status_visible()')]
+ack=present[present.index('    if ((s_view==SHELF || s_view==MANAGE || s_view==BULK) && err==EPD_DRAW_SUCCESS) {'):present.index('    if (err==EPD_DRAW_SUCCESS && reader_status_visible()')]
 unit+='enum{EPD_DRAW_SUCCESS,EPD_DRAW_FAULT};enum{APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL};\nstatic void ack_present(int redraw,int err){'+ack+'}\n'
 unit+=r'''
 static void reset(app_ctx_t *ctx){for(unsigned i=0;i<9;++i){free(s_covers[i].gray);free(s_covers[i].fast_bits);memset(&s_covers[i],0,sizeof(s_covers[i]));s_covers[i].index=i;snprintf(s_shelf[i].path,32,"book%u",i);}

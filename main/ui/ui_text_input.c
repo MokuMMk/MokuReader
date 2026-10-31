@@ -4,6 +4,9 @@
  * 中文：输入框共用绘制与命中区域；按实际系统字体测量，光标只随编辑刷新。
  * English: Shared field painting and hit geometry; measure the actual system font and refresh carets only on edits.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_text_input.h"
 #include <ui_kit.h>
 #include <string.h>

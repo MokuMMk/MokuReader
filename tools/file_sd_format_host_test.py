@@ -35,6 +35,7 @@ static esp_err_t read_pico_sd_format(void){++formats;if(!format_error)s_sd=(read
 static void read_pico_sd_get_info(read_pico_sd_info_t *out){*out=s_sd;}
 static const char *esp_err_to_name(esp_err_t err){(void)err;return "ERROR";}
 '''
+unit+='\n'.join(line for line in (source.parents[2]/'main/ui/ui_files_layout.h').read_text().splitlines() if not line.startswith(('#include','#pragma'))) + '\n'
 unit+=function('storage_card_rect',source)+'\n'+function('sd_needs_format',source)+'\n'
 unit+='static int tap(int x,int y,bool long_press){ui_gesture_event_t event={x,y};const ui_gesture_event_t *ev=&event;\n'+s[a:b]+'return format_cancelled ? APP_REDRAW_PAGE : APP_REDRAW_NONE;\n}\n'
 unit+=r'''
@@ -56,5 +57,5 @@ int main(void){
 assert '将清空卡内全部数据，再点确认' in s
 with tempfile.TemporaryDirectory(dir=ROOT/'build') as folder:
  c=Path(folder)/'test.c';exe=Path(folder)/'test';c.write_text(unit)
- subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
+ subprocess.run(['cc','-std=gnu11','-Wall','-Wextra','-Werror','-Wno-unused-function','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True)
  subprocess.run([str(exe)],check=True)

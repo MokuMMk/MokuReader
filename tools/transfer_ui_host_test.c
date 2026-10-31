@@ -387,5 +387,10 @@ int main(void) {
     test_scan_count = 8; test_scan_error = ESP_OK;
     network_ui_tick(&ctx);
     wifi_recovery_regression(&ctx);
+    // 配网子页返回保留在线STA，后台对时可以继续。/ Keep ready STA alive on setup return so NTP can complete.
+    app_transfer_request_wifi_setup();on_enter(&ctx);
+    test_status=(read_pico_transfer_status_t){.mode=READ_PICO_TRANSFER_MODE_STA,.state=READ_PICO_TRANSFER_READY,.network_ready=true};
+    s_session_started=true;int before_exit=test_stop_count;transfer_on_exit(&ctx);
+    assert(test_stop_count==before_exit&&!s_wifi_settings_only&&!s_session_started);
     puts("transfer_ui_host_test: PASS");
 }

@@ -6,6 +6,9 @@
  * 冻结：不访问硬件、设置或刷新，不留整帧缓存；输入零分配，关闭释放。
  * Frozen: no hardware, settings, presentation or full-frame cache; input allocates nothing and close frees controls.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_quick_menu.h"
 #include "ui_kit.h"
 #include "ui_nav.h"

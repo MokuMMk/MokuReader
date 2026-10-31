@@ -2,6 +2,9 @@
  * 中文：复用既有液态玻璃；仅展开时模糊一次，保存一块底图，输入期间零分配/零绘制。
  * English: Reuse liquid glass, blur once on opening, save one bounded underlay; input allocates and paints nothing.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_ai_menu.h"
 #include "ui_kit.h"
 #include "ui_image_dither.h"

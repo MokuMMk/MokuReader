@@ -180,7 +180,7 @@ int main(void){
     #include <stdio.h>
     typedef struct {int ignored;}app_ctx_t;
     typedef enum{APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE,APP_REDRAW_FULL,APP_REDRAW_DONE}app_redraw_t;
-    typedef struct app_desc_s{int index;bool visible,persistent_navigation;bool(*main_page_visible)(app_ctx_t*);}app_desc_t;
+    typedef struct app_desc_s{int index;bool visible,persistent_navigation,white_child_transition;bool(*navigation_visible)(app_ctx_t*);bool(*main_page_visible)(app_ctx_t*);}app_desc_t;
     static const app_desc_t *s_presented_root,*s_presented_main,*drawing;
     static unsigned quality,observed;
     static app_ctx_t ctx;

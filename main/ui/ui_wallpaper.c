@@ -6,6 +6,9 @@
  * English: Shared SD image scaling and grayscale rendering for wallpaper preview and lock.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_wallpaper.h"
 
 #include <stdio.h>

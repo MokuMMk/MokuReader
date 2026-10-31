@@ -4,6 +4,9 @@
  * 冻结：不停止别人的传书会话，不跳过TLS验证，不自动启用下载字体。
  * Frozen: never stop another transfer session, bypass TLS, or apply a downloaded face.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "online_font.h"
 #include "online_font_store.h"
 #include <errno.h>
@@ -32,7 +35,7 @@ static online_font_status_t s_status;
 static atomic_bool s_running,s_cancel;
 static const char *TAG="online_font";
 
-const online_font_item_t *online_font_item(unsigned index){return index<ONLINE_FONT_COUNT?&s_fonts[index]:NULL;}
+const online_font_item_t *online_font_item(unsigned index){return index<ONLINE_FONT_COUNT?&s_fonts[index]:index==ONLINE_FONT_SETUP_INDEX?&s_setup_font:NULL;}
 bool online_font_installed(unsigned index){
     const online_font_item_t *item=online_font_item(index);
     return item&&read_pico_sd_io_ready()&&online_font_store_installed(item,ONLINE_FONT_DIRECTORY);
@@ -96,6 +99,27 @@ failed:
     }
 done:
     free(url);free(next);return client;
+}
+// 对照固件内原始许可证逐字节核验下载，不信任网络给出的路径或文本。/ Verify downloaded notice bytes against the compiled original, never trust remote paths/text.
+static esp_err_t verify_license(const online_font_item_t *item,uint8_t *buffer){
+    if(!item->license_url||!item->license)return ESP_ERR_INVALID_ARG;
+    esp_http_client_handle_t client=open_source(item->license_url);if(!client)return ESP_FAIL;
+    size_t expected=strlen(item->license),received=0;esp_err_t result=ESP_FAIL;
+    int64_t size=esp_http_client_get_content_length(client);
+    if(size>0&&(uint64_t)size!=expected)goto done;
+    int64_t idle=esp_timer_get_time();
+    while(!cancelled(NULL)){
+        int n=esp_http_client_read(client,(char *)buffer,8192);
+        if(n==-ESP_ERR_HTTP_EAGAIN&&esp_timer_get_time()-idle<20000000){vTaskDelay(pdMS_TO_TICKS(10));continue;}
+        if(n<0)break;
+        if(!n){if(esp_http_client_is_complete_data_received(client)){if(received==expected)result=ESP_OK;break;}
+            if(esp_timer_get_time()-idle>20000000)break;
+            vTaskDelay(pdMS_TO_TICKS(10));continue;}
+        if((size_t)n>expected-received||memcmp(buffer,item->license+received,(size_t)n))break;
+        received+=(size_t)n;idle=esp_timer_get_time();
+    }
+done:
+    esp_http_client_cleanup(client);return result;
 }
 static esp_err_t ensure_network(bool *owned){
     read_pico_transfer_status_t status;read_pico_transfer_get_status(&status);
@@ -165,7 +189,8 @@ static void worker(void *arg){
     esp_http_client_cleanup(client);client=NULL;
     if(result==ESP_OK&&!cancelled(NULL)){
         state(ONLINE_FONT_VERIFYING,"正在校验");message="文件校验或安装失败";
-        result=online_font_store_commit(item,ONLINE_FONT_DIRECTORY,source,cancelled,NULL);
+        if(index==ONLINE_FONT_SETUP_INDEX){state(ONLINE_FONT_VERIFYING,"正在准备许可证");result=verify_license(item,buffer);message="许可证下载或校验失败";}
+        if(result==ESP_OK&&!cancelled(NULL)){message="文件校验或安装失败";result=online_font_store_commit(item,ONLINE_FONT_DIRECTORY,source,cancelled,NULL);}
     }
 done:
     if(client)esp_http_client_cleanup(client);

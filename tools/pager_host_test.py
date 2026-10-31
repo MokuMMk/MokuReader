@@ -18,6 +18,7 @@ unit=r'''
 #include <string.h>
 #include "assets/ui_icons.h"
 #define FILE_ROWS 9
+#define UI_FILES_ROWS 7
 #define UI_LOCK_HEIGHT 1216
 typedef struct {int x,y,width,height;} EpdRect;
 enum {EPD_DRAW_ALIGN_CENTER,UI_GRAY_WHITE=255};
@@ -30,12 +31,9 @@ typedef struct {int type;uint16_t x0,y0,x,y;} ui_gesture_event_t;
 static uint8_t pixels[684*1216];
 static char drawn_label[96];
 static int active_top=1006;
-#if KIIKO_BOARD_METALIO47
-static unsigned haptics;
-static int metalio_haptic_click(void){++haptics;return 0;}
-#endif
 static int s_count,s_folder,s_page,s_view,s_pager_pressed=-1;
-static bool s_scan_pending,s_pager_paint_pending;
+static bool s_scan_pending,s_pager_paint_pending,s_file_grid;
+static int file_visible_count(void){return s_count;}
 static uint8_t ui_read_pixel(const uint8_t *fb,int x,int y){assert(x>=0&&x<684&&y>=0&&y<1216);return fb[y*684+x]>>4;}
 static uint8_t ui_contrast_gray(uint8_t gray){return gray&240;}
 static void epd_draw_pixel(int x,int y,uint8_t c,uint8_t *fb){assert(x>=36&&x<648&&y>=active_top&&y<active_top+50);fb[y*684+x]=c;}
@@ -56,17 +54,11 @@ static unsigned ink_in(EpdRect r){unsigned n=0;for(int y=r.y;y<r.y+r.height;++y)
 static void check_outside(void){for(int y=0;y<1216;++y)if(y<active_top||y>=active_top+50)for(int x=0;x<684;++x)assert(pixels[y*684+x]==240);}
 static ui_gesture_event_t event(int type,int action){active_top=file_pager_top();EpdRect r=ui_pager_rect_at(action,active_top);int x=r.x+r.width/2,y=r.y+r.height/2;return(ui_gesture_event_t){type,x,y,x,y};}
 static void tap(app_ctx_t *ctx,int action,int expected){
-#if KIIKO_BOARD_METALIO47
- unsigned pulses=haptics;
-#endif
  app_redraw_t redraw=-1;ui_gesture_event_t e=event(UI_GESTURE_PRESS,action);
  assert(file_pager_event(ctx,&e,&redraw)&&redraw==APP_REDRAW_AREA&&s_pager_pressed==action&&s_pager_paint_pending);
  int prior=s_page;e.type=UI_GESTURE_TAP;
  assert(file_pager_event(ctx,&e,&redraw)&&s_page==expected&&s_pager_pressed<0);
  assert(redraw==(prior==expected?APP_REDRAW_AREA:APP_REDRAW_PAGE));
-#if KIIKO_BOARD_METALIO47
- assert(haptics==pulses+1);
-#endif
 }
 int main(void){
  EpdRect area=ui_pager_area();assert(area.y==1006&&area.y+area.height==1056);
@@ -93,9 +85,12 @@ int main(void){
  assert(pixels[1006*684+116]==240&&pixels[1055*684+203]==240);
  memset(pixels,240,sizeof(pixels));ui_pager_draw(pixels,"0本书 · 01/01",0,1,true,-1);for(int a=0;a<4;++a)assert(!ink_in(ui_pager_rect(a)));check_outside();
  app_ctx_t ctx={pixels,NULL};s_view=FILE_VIEW_LIST;s_folder=-1;s_count=96;s_page=5;
- assert(file_pager_pages()==20);tap(&ctx,UI_PAGER_FIRST,0);tap(&ctx,UI_PAGER_PREVIOUS,0);tap(&ctx,UI_PAGER_NEXT,1);tap(&ctx,UI_PAGER_LAST,19);tap(&ctx,UI_PAGER_NEXT,19);tap(&ctx,UI_PAGER_PREVIOUS,18);
- assert(strstr(drawn_label,"共 20 页"));s_folder=3;assert(visible_rows()==7);
- s_folder=0;s_page=2;assert(file_pager_pages()==12);tap(&ctx,UI_PAGER_LAST,11);
+ app_redraw_t root_redraw;ui_gesture_event_t root_event=event(UI_GESTURE_PRESS,UI_PAGER_NEXT);
+ assert(!file_pager_event(&ctx,&root_event,&root_redraw));
+ s_folder=0;assert(visible_rows()==7&&file_pager_pages()==14);
+ tap(&ctx,UI_PAGER_FIRST,0);tap(&ctx,UI_PAGER_PREVIOUS,0);tap(&ctx,UI_PAGER_NEXT,1);tap(&ctx,UI_PAGER_LAST,13);tap(&ctx,UI_PAGER_NEXT,13);tap(&ctx,UI_PAGER_PREVIOUS,12);
+ assert(strstr(drawn_label,"共 14 页"));
+ s_file_grid=true;s_page=0;assert(visible_rows()==9&&file_pager_pages()==11);tap(&ctx,UI_PAGER_LAST,10);s_file_grid=false;
  s_folder=3;s_view=FILE_VIEW_MOVE;s_page=1;assert(file_pager_pages()==14);tap(&ctx,UI_PAGER_LAST,13);tap(&ctx,UI_PAGER_FIRST,0);
  {
   assert(file_pager_top()==1006&&file_action_rect(0).y==875);
@@ -127,6 +122,5 @@ with tempfile.TemporaryDirectory() as folder:
 file_source=files.read_text()
 assert '设为书籍目录' in file_source and '设为字体目录' in file_source
 assert 'app_settings_set_books_dir' in file_source and 'app_settings_set_fonts_dir' in file_source
-assert 'return (end-214)/88;' in file_source
-assert '214 + row * 88' in file_source and file_source.count('(ev->y0 - 214) / 88')==2
-assert 214+8*88+82 < 1006
+assert 'UI_FILES_LIST_TOP' in file_source and 'UI_FILES_ROWS' in file_source
+assert 310+7*94 < 1006

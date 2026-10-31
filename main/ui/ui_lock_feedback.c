@@ -4,6 +4,9 @@
  * 用户修订：取消占位拼贴和分步显影，调用者先清白后局部画锁；最终拼贴绘制器保持。
  * User revision: remove placeholders and staged reveal; the caller whitens before the local lock, retaining final collage artwork.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_lock_feedback.h"
 #include <string.h>
 #include "ui_kit.h"

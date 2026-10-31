@@ -185,6 +185,9 @@ void app_settings_set_reader_hold_refresh(bool on);
 bool app_settings_reader_vertical_turn(void);
 void app_settings_set_reader_vertical_turn(bool on);
 /// 书架排序偏好重启后保持。/ Persist the shelf's recent-reading sort across restarts.
+/// 顺序编码保留旧0/1；2名称降、3最近升、4添加升、5添加降。/ Legacy0/1, then name-desc/recent-asc/added-asc/added-desc.
+uint8_t app_settings_shelf_order(void);
+void app_settings_set_shelf_order(uint8_t order);
 bool app_settings_shelf_recent_sort(void);
 void app_settings_set_shelf_recent_sort(bool on);
 /// 蓝牙翻页器：启用 BLE HID 主机，好让蓝牙翻页器连上并翻页；默认关闭。

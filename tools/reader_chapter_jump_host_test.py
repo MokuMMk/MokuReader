@@ -30,6 +30,7 @@ static const char *s_text="body";
 static char s_title[128]="第一章 山边小村";
 static int s_view=READING,s_reader_panel=READER_PANEL_NONE,s_reader_slider=2,s_bookmark_page;
 static bool s_water_turn_pending,s_reader_turn_pending,s_reader_text_frame;
+static bool s_reader_image_frame __attribute__((unused)),s_reader_image_exit_pending __attribute__((unused));
 static bool s_reader_footer_pending,s_reader_image_refresh_pending,s_reader_cleanup;
 static bool s_bookmark_edit,s_bookmark_delete_confirm,s_bookmark_delete_error,s_recent_days_valid;
 static unsigned s_bookmark_selected,s_session_turns=12;

@@ -16,6 +16,17 @@ build/book-tests/auto-lock
 cc -std=gnu11 -Wall -Wextra -Werror -Itools/settings_backup_stubs \
     tools/book_history_backup_host_test.c -o build/book-tests/book-history-backup
 build/book-tests/book-history-backup
+python3 tools/setup_state_host_test.py
+python3 tools/gen_ui_locale.py
+python3 tools/ui_locale_host_test.py
+python3 tools/ui_locale_layout_host_test.py
+python3 tools/onboarding_flow_host_test.py
+python3 tools/setup_chrome_host_test.py
+python3 tools/setup_license_host_test.py
+python3 tools/management_layout_host_test.py
+python3 tools/file_batch_host_test.py
+cc -std=gnu11 -Wall -Wextra -Werror -fsanitize=address,undefined tools/book_added_host_test.c -o build/book-tests/added
+build/book-tests/added
 python3 tools/file_names_host_test.py
 python3 tools/book_ui_host_test.py
 python3 tools/file_browser_names_host_test.py

@@ -8,6 +8,9 @@
  * 用户修订：普通、快刷、水波纹共用底栏反馈，保留灰底及文字；仅重绘图标盒并推真实变化边界，避免矩形白框。
  * User revision: ordinary, fast and water share navigation feedback, retaining gray backgrounds and labels; repaint only the icon box and present actual change bounds to avoid white rectangles.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_click_feedback.h"
 #include <string.h>
 #include "esp_heap_caps.h"

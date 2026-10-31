@@ -2,6 +2,9 @@
  * 中文：五行字体名/文件大小/下载按钮，状态变化有界局刷，不展示逐项授权信息。
  * English: Five compact name/size/download rows; bounded status refresh, without per-item license chrome.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_online_fonts.h"
 #include <stdio.h>
 #include <string.h>
@@ -35,20 +38,35 @@ static const char *font_label(const online_font_item_t *item){
     // Do not expand built-in assets; use the same face's Latin name if its label lacks coverage.
     return ui_font_has_text(item->name)||ttf_font_has_text(item->name)?item->name:item->ascii_name;
 }
+static const char *setup_label(const ui_online_fonts_t *ui,const char *zh,const char *en){
+    return ui->onboarding&&(ui->english||(!ui_font_has_text(zh)&&!ttf_font_has_text(zh)))?en:zh;
+}
+static const char *setup_status(const ui_online_fonts_t *ui){
+    if(!ui->onboarding||(!ui->english&&(ui_font_has_text(ui->status.message)||ttf_font_has_text(ui->status.message))))return ui->status.message;
+    switch(ui->status.phase){
+        case ONLINE_FONT_CONNECTING:return "Connecting to Wi-Fi...";
+        case ONLINE_FONT_DOWNLOADING:return "Downloading font...";
+        case ONLINE_FONT_VERIFYING:return "Checking the complete download...";
+        case ONLINE_FONT_DONE:return "Font saved. Go back to select it.";
+        case ONLINE_FONT_FAILED:return "Download failed. Check Wi-Fi and the card, then retry.";
+        case ONLINE_FONT_CANCELLED:return "Download cancelled. Your current font is unchanged.";
+        default:return "Choose a font to download.";
+    }
+}
 static unsigned percent(const online_font_status_t *s){return s->total?(unsigned)((uint64_t)s->received*100/s->total):0;}
 void ui_online_fonts_draw(const ui_online_fonts_t *ui,uint8_t *fb){
     ui_text_set_system_scale(true);ui_clear_page(fb);ui_nav_status(fb);
     ui_nav_back(fb,36,79);
-    ui_text_box(fb,(EpdRect){188,79,308,70},34,"在线字体",EPD_DRAW_ALIGN_CENTER,false);
+    ui_text_box(fb,(EpdRect){188,79,308,70},34,setup_label(ui,"在线字体","Online fonts"),EPD_DRAW_ALIGN_CENTER,false);
     ui_hairline(fb,176,36,612,0x70);
-    ui_text_box(fb,(EpdRect){36,192,612,40},21,ui->reading?"用于阅读字体":"用于系统字体",EPD_DRAW_ALIGN_LEFT,false);
+    ui_text_box(fb,(EpdRect){36,192,612,40},21,ui->onboarding?setup_label(ui,"选择完整字库","Choose a complete font"):ui->reading?"用于阅读字体":"用于系统字体",EPD_DRAW_ALIGN_LEFT,false);
     for(unsigned i=0;i<ONLINE_FONT_COUNT;++i){
         const online_font_item_t *item=online_font_item(i);EpdRect r=row_rect(i),button=download_rect(i);
         ui_text_box(fb,(EpdRect){r.x,r.y+26,382,68},26,font_label(item),EPD_DRAW_ALIGN_LEFT,false);
         char size[24];snprintf(size,sizeof(size),"%.1fMB",(double)item->size/1000000.0);
         ui_text_box(fb,(EpdRect){426,r.y+26,102,68},20,size,EPD_DRAW_ALIGN_RIGHT,false);
         bool active=ui->status.busy&&ui->status.item==i;
-        const char *label=ui->installed[i]?"已下载":active?"取消":"下载";
+        const char *label=ui->installed[i]?setup_label(ui,"已下载","Saved"):active?setup_label(ui,"取消","Cancel"):setup_label(ui,"下载","Get");
         bool enabled=active||(!ui->installed[i]&&!ui->status.busy);
         ui_fill_round_rect(fb,button,16,enabled?UI_GRAY_BLACK:UI_GRAY_WHITE);
         if(!enabled)ui_draw_control_frame(fb,button,16,UI_GRAY_BLACK);
@@ -56,7 +74,7 @@ void ui_online_fonts_draw(const ui_online_fonts_t *ui,uint8_t *fb){
         ui_hairline(fb,r.y+r.height-1,r.x,r.width,0x80);
     }
     EpdRect status=status_rect();
-    if(ui->status.message[0])ui_text_box(fb,(EpdRect){status.x,status.y,status.width,92},22,ui->status.message,EPD_DRAW_ALIGN_LEFT,false);
+    if(ui->status.message[0])ui_text_box(fb,(EpdRect){status.x,status.y,status.width,92},22,setup_status(ui),EPD_DRAW_ALIGN_LEFT,false);
     if(ui->status.phase==ONLINE_FONT_DOWNLOADING){
         unsigned p=percent(&ui->status);char text[16];snprintf(text,sizeof(text),"%u%%",p);
         ui_text_box(fb,(EpdRect){status.x,status.y+95,90,52},21,text,EPD_DRAW_ALIGN_LEFT,false);
@@ -64,13 +82,13 @@ void ui_online_fonts_draw(const ui_online_fonts_t *ui,uint8_t *fb){
         ui_fill_rect_fast((EpdRect){142,status.y+112,(int)(506*p/100),8},UI_GRAY_BLACK,fb);
     }
     ui_draw_control_frame(fb,return_rect(),18,UI_GRAY_BLACK);
-    ui_text_box(fb,return_rect(),27,"返回字体列表",EPD_DRAW_ALIGN_CENTER,false);
+    ui_text_box(fb,return_rect(),27,ui->onboarding?setup_label(ui,"跳过引导","Skip setup"):"返回字体列表",EPD_DRAW_ALIGN_CENTER,false);
     if(ui->confirm_cancel){
         EpdRect dialog={48,438,588,354};ui_fill_round_rect(fb,dialog,24,UI_GRAY_WHITE);ui_draw_control_frame(fb,dialog,24,UI_GRAY_BLACK);
-        ui_text_box(fb,(EpdRect){72,466,540,78},32,"取消下载？",EPD_DRAW_ALIGN_CENTER,false);
-        ui_text_box(fb,(EpdRect){76,554,532,100},24,"当前字体保留",EPD_DRAW_ALIGN_CENTER,false);
+        ui_text_box(fb,(EpdRect){72,466,540,78},32,setup_label(ui,"取消下载？","Cancel download?"),EPD_DRAW_ALIGN_CENTER,false);
+        ui_text_box(fb,(EpdRect){76,554,532,100},24,setup_label(ui,"当前字体保留","Your current font stays"),EPD_DRAW_ALIGN_CENTER,false);
         for(int yes=0;yes<2;++yes){EpdRect b=cancel_button(yes);ui_fill_round_rect(fb,b,16,yes?UI_GRAY_BLACK:UI_GRAY_WHITE);
-            ui_draw_control_frame(fb,b,16,UI_GRAY_BLACK);ui_text_box(fb,b,25,yes?"取消下载":"继续下载",EPD_DRAW_ALIGN_CENTER,yes);}
+            ui_draw_control_frame(fb,b,16,UI_GRAY_BLACK);ui_text_box(fb,b,25,yes?setup_label(ui,"取消下载","Cancel"):setup_label(ui,"继续下载","Continue"),EPD_DRAW_ALIGN_CENTER,yes);}
     }
     ui_text_set_system_scale(false);
 }

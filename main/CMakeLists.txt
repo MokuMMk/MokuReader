@@ -1,6 +1,7 @@
 include("${CMAKE_CURRENT_LIST_DIR}/../cmake/board.cmake")
 if(KIIKO_BOARD_METALIO47)
 set(main_requires
+    kiiko_locale
     kiiko_board
     read_pico
     metalio_hw
@@ -60,6 +61,8 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "lock_pin_flow.c"
         "lock_screen.c"
         "settings.c"
+        "setup_state.c"
+        "apps/app_onboarding.c"
         "factory_reset.c"
         "app/app_loop.c"
         "app/sd_recovery.c"
@@ -94,6 +97,7 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "apps/app_dashboard.c"
         "apps/app_files.c"
         "apps/file_tree.c"
+        "apps/file_search.c"
         "apps/app_device_settings.c"
         "apps/app_image.c"
         "apps/app_transfer.c"
@@ -102,6 +106,7 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "book/book_progress.c"
         "book/book_history_backup.c"
         "book/book_title.c"
+        "book/book_added.c"
         "book/book_ticket.c"
         "book/book_excerpt.c"
         "book/book_lock_collage.c"
@@ -188,6 +193,7 @@ endif()
 
 else()
 set(main_requires
+    kiiko_locale
     kiiko_board
     read_pico
     read_pico_transfer
@@ -242,6 +248,8 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "lock_pin_flow.c"
         "lock_screen.c"
         "settings.c"
+        "setup_state.c"
+        "apps/app_onboarding.c"
         "factory_reset.c"
         "app/app_loop.c"
         "app/crash_note.c"
@@ -274,6 +282,7 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "apps/app_dashboard.c"
         "apps/app_files.c"
         "apps/file_tree.c"
+        "apps/file_search.c"
         "apps/app_device_settings.c"
         "apps/app_image.c"
         "apps/app_transfer.c"
@@ -282,6 +291,7 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "book/book_progress.c"
         "book/book_history_backup.c"
         "book/book_title.c"
+        "book/book_added.c"
         "book/book_ticket.c"
         "book/book_excerpt.c"
         "book/book_lock_collage.c"
@@ -299,6 +309,9 @@ kiiko_board_sources(kiiko_selected_sources "${CMAKE_CURRENT_LIST_DIR}" "app_main
         "book/book_layout.c"
         "book/gbk.c"
         "font/ttf_font.c"
+        "font/online_font.c"
+        "font/online_font_store.c"
+        "ui/ui_online_fonts.c"
         "font/app_font_context.c"
         "font/ui_font.c"
         "font/ui_hanzi.c"
@@ -335,3 +348,5 @@ if(NOT KIIKO_BOARD_METALIO47)
         target_compile_definitions(${COMPONENT_LIB} PRIVATE KIIKO_PICO_MAIN_CLEAN=1)
     endif()
 endif()
+
+target_compile_definitions(${COMPONENT_LIB} PRIVATE KIIKO_UI_LOCALIZATION=1)

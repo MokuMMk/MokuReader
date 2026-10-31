@@ -6,6 +6,9 @@
  * 冻结：翻页不画按下态；引用 ui_kit.h 阈值；短拖取消以免误翻。
  * Frozen: No pressed decoration for page turns; use ui_kit.h thresholds; short drags cancel to avoid accidental turns.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_gesture.h"
 #include "ui_kit.h"
 #include <string.h>

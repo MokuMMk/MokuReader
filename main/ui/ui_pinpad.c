@@ -10,6 +10,9 @@
  * 冻结：不切字体、不写凭据、不调用显示；缓存和输入在退出时释放/清零。
  * Frozen: No face switches, credentials or presentation; release cache and wipe input on exit.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_pinpad.h"
 #include "ui_kit.h"
 #include "ui_glass.h"

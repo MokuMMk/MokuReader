@@ -2,6 +2,9 @@
  * 中文：单个低优先级任务准备首页/设置头像，按代次发布两个有界小图；UI只拷贝结果。
  * English: One low-priority task prepares two bounded avatars, publishes by generation and never renders UI.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_avatar.h"
 #include "ui_wallpaper.h"
 #include "book_store.h"

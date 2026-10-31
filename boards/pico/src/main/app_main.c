@@ -18,6 +18,8 @@
 #include "app_loop.h"
 #include "app_content_open.h"
 #include "boot_state.h"
+#include "setup_state.h"
+extern const app_desc_t app_onboarding;
 #include "lock_screen.h"
 #include "ui_lock_feedback.h"
 #include "lock_pin.h"
@@ -92,13 +94,14 @@ static void draw_startup_frame(uint8_t *framebuffer) {
     const int cy = epd_rotated_display_height() / 2;
     static const char *const wordmark[] = {"K", "i", "i", "k", "o", "r", "e", "a", "d"};
     static const char *const caption[] = {"准", "备", "资", "源"};
+    static const char *const caption_en[]={"P","r","e","p","a","r","i","n","g"," ","r","e","s","o","u","r","c","e","s"};
     const struct {
         const char *text;
         const char *const *letters;
         int count, px, tracking, gray, center_y;
     } lines[] = {
         {"Kiikoread", wordmark, 9, 72, 2, 0, cy - 50},
-        {"准备资源", caption, 4, 24, 8, 7, cy + 20},
+        {app_setup_english()?"Preparing resources":"准备资源", app_setup_english()?caption_en:caption, app_setup_english()?19:4, 24, app_setup_english()?1:8, 7, cy + 20},
     };
     // 以实际字宽居中，疏朗品牌字距与浅灰提示形成层次，不引入新的字体或位图。
     // Center measured advances; tracked branding and a muted caption add hierarchy without new fonts or bitmaps.
@@ -238,6 +241,8 @@ void app_main(void) {
         else app_font_activate_system();
     }
     rp_boot_mark("resume");
+    // 首次引导服从现有密码/异常启动门禁，老配置不会重新触发。/ Setup retains PIN/crash gates and never reopens for legacy profiles.
+    if(first==app_home_page()&&!lock_pin_enabled()&&app_setup_pending())first=&app_onboarding;
     app_loop_run(&(app_loop_config_t){
         .hl = &hl,
         .fb = framebuffer,

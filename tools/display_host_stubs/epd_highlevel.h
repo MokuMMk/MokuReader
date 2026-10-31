@@ -11,3 +11,5 @@ enum EpdDrawError epd_hl_update_screen_full(EpdiyHighlevelState*, enum EpdDrawMo
 enum EpdDrawError epd_hl_update_screen_from_white(EpdiyHighlevelState*, enum EpdDrawMode, int);
 enum EpdDrawError epd_hl_update_area(EpdiyHighlevelState*, enum EpdDrawMode, int, EpdRect);
 enum EpdDrawError epd_hl_update_area_full(EpdiyHighlevelState*, enum EpdDrawMode, int, EpdRect);
+
+enum EpdDrawError epd_hl_update_area_strict(EpdiyHighlevelState*, enum EpdDrawMode, int, EpdRect, bool);

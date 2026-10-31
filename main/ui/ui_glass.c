@@ -9,6 +9,9 @@
  * Power, PIN and top quick surfaces share it; PSRAM workspace is released after painting.
  * Frozen: no hardware writes, display calls, or retained framebuffer caches.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_glass.h"
 #include "ui_kit.h"
 #include "ui_image_dither.h"

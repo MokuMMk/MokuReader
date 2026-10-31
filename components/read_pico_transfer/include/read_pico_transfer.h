@@ -88,6 +88,8 @@ bool read_pico_transfer_radio_busy(void);
 void read_pico_transfer_service_poll(void);
 /// 只读已保存SSID；未配置仍返回ESP_OK。/ Read only the saved SSID; unconfigured still returns ESP_OK.
 esp_err_t read_pico_transfer_get_saved_wifi(char ssid[33], bool *configured);
+/// 选择已确认网络并复用私有密码；遵守停服与配网互斥。/ Select a confirmed profile privately under existing stopped/config gates.
+esp_err_t read_pico_transfer_select_saved_wifi(const char *ssid);
 typedef struct {
     uint8_t configured; ///< 是否已配网 / Whether STA credentials are configured
     char ssid[33]; ///< 已保存的网络名称 / Saved network name

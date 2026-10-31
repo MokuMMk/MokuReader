@@ -8,6 +8,9 @@
  * come from the app registry.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_menu.h"
 
 #include <stdio.h>

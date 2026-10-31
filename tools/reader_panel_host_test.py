@@ -36,6 +36,7 @@ static bool s_reader_cleanup,s_reader_turn_pending,s_water_turn_pending,s_reader
 static char s_reader_notice[20];static reader_panel_t s_reader_panel;
 static int images,rotation=3,draws,pushes,errors,prepared,ended,full_draws,outer_draws,stores,cancels,invalidates;
 static uint32_t generation=9;static bool background,draw_lock,failed,cache_ready,cache_oom;
+#define READER_STATS_TOP 586
 static int font_top=580,settings_top=580;
 static bool fast_panels;
 static int four_pushes,entry_pushes;static bool erased_underlay;
@@ -71,7 +72,7 @@ static int64_t esp_timer_get_time(void){return 123456;}
 static void lock_draw(void){assert(!draw_lock);draw_lock=true;}
 static void unlock_draw(void){assert(draw_lock);draw_lock=false;}
 static void draw_reader_panel(uint8_t*fb){
- assert(draw_lock);++draws;int top=s_reader_panel==READER_PANEL_TOOLS?1096:s_reader_panel==READER_PANEL_FONT_SETTINGS?font_top:s_reader_panel==READER_PANEL_REFRESH_SETTINGS?settings_top:768;
+ assert(draw_lock);++draws;int top=s_reader_panel==READER_PANEL_TOOLS?1096:s_reader_panel==READER_PANEL_FONT_SETTINGS?font_top:s_reader_panel==READER_PANEL_REFRESH_SETTINGS?settings_top:READER_STATS_TOP;
  memset(fb+top*684/2,0,(1216-top)*684/2);
 }
 static enum EpdDrawError update_display_reader_panel_fast(hl_t*h,EpdRect a){
@@ -123,7 +124,7 @@ int main(void){
    reset(i?READER_PANEL_TOOLS:READER_PANEL_NONE);s_reader_panel=targets[i];
    assert(reader_panel_fast_present(&ctx,APP_REDRAW_PAGE)&&draws==1&&pushes==1&&prepared==1&&ended==1&&!errors);
    assert(area.x==0&&area.width==684&&area.height==1216-area.y);
-   assert(area.y==(i==0?1096:i==1?font_top:i==2?settings_top:768));
+   assert(area.y==(i==0?1096:i==1?font_top:i==2?settings_top:READER_STATS_TOP));
    assert(!memcmp(front,original,(size_t)area.y*684/2)&&!memcmp(front,back,BYTES));
    assert(s_reader_panel_frame.valid&&s_reader_panel_frame.panel==targets[i]);
    bool same=targets[i]==READER_PANEL_FONT_SETTINGS||targets[i]==READER_PANEL_REFRESH_SETTINGS;

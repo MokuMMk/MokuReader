@@ -5,6 +5,9 @@
  * 用户修复：书名与章名统一使用当前系统字体的标题路径；原生字号、整行字体来源和灰阶抗锯齿保持一致，不放大补充点阵。
  * User fix: book/chapter names share the active system title path with native sizes, stable whole-line font selection and gray antialiasing, without enlarged bitmap supplements.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "book_toc.h"
 
 #include <stdio.h>
@@ -223,7 +226,7 @@ void book_toc_render(uint8_t *fb, const char *book_title, size_t chapters,
 
     char title[160];
     one_line(title, sizeof(title), book_title ? book_title : "");
-    if (!title[0]) strcpy(title, "当前书籍");
+    if (!title[0]) snprintf(title,sizeof(title),"%s","当前书籍");
     toc_title(fb, (EpdRect){TOC_LEFT,160,420,48}, 23, title, 0xe0);
     char total[48];
     size_t volumes=book_navigation_volume_count();

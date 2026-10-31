@@ -7,6 +7,9 @@
  * S31 图片预览保留十六级灰阶，只有文件列表采用黑白快刷。
  * S31 previews retain sixteen gray levels; only their file list uses BW updates.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include <dirent.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -126,7 +129,7 @@ static void scan_dir(const char *root) {
 static void scan_images(void) {
     s_count = 0;
     if (!items_alloc()) {
-        strcpy(s_message, "图片列表内存不足，请返回后重试");
+        snprintf(s_message,sizeof(s_message),"%s","图片列表内存不足，请返回后重试");
         return;
     }
     // 先分配再访问列表；首次从文件管理进入时此前会解引用空指针。
@@ -135,7 +138,7 @@ static void scan_images(void) {
         const char *name = strrchr(s_requested_path, '/');
         bool png;
         if (!name || !image_name(name + 1, &png)) {
-            strcpy(s_message, "图片格式不支持");
+            snprintf(s_message,sizeof(s_message),"%s","图片格式不支持");
             return;
         }
         s_count = 1;
@@ -155,7 +158,7 @@ static void scan_images(void) {
     s_count = 1;
 #endif
     memset(s_items, 0, sizeof(s_items[0]));
-    strcpy(s_items[0].name, "内置灰阶测试图");
+    snprintf(s_items[0].name,sizeof(s_items[0].name),"%s","内置灰阶测试图");
     s_items[0].png = true;
     read_pico_sd_info_t sd = {0};
     read_pico_sd_get_info(&sd);
@@ -185,12 +188,12 @@ static bool load_image(int index) {
     if (from_file) {
         struct stat st;
         if (stat(item->path, &st) || st.st_size <= 0 || (uint64_t)st.st_size > IMAGE_BYTES_MAX) {
-            strcpy(s_message, "图片超过 50 MB 或无法读取"); return false;
+            snprintf(s_message,sizeof(s_message),"%s","图片超过 50 MB 或无法读取"); return false;
         }
     }
     bool dimensions_ok = from_file ? book_image_file_dimensions(item->path, item->png, &width, &height)
                                   : book_image_dimensions(data, size, item->png, &width, &height);
-    if (!dimensions_ok || !width || !height) { strcpy(s_message, "图片格式不支持"); return false; }
+    if (!dimensions_ok || !width || !height) { snprintf(s_message,sizeof(s_message),"%s","图片格式不支持"); return false; }
     unsigned fit_w = UI_LOCK_WIDTH, fit_h = (uint64_t)height * fit_w / width;
 #if KIIKO_BOARD_METALIO47
     const unsigned image_height = UI_LOCK_HEIGHT - 56;
@@ -203,7 +206,7 @@ static bool load_image(int index) {
     s_gray = heap_caps_malloc((size_t)fit_w * fit_h, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     bool ok = s_gray && (from_file ? book_image_file_grayscale(item->path, item->png, fit_w, fit_h, s_gray)
                                   : book_image_grayscale(data, size, item->png, fit_w, fit_h, s_gray));
-    if (!ok) { free(s_gray); s_gray = NULL; strcpy(s_message, "解码失败或内存不足"); return false; }
+    if (!ok) { free(s_gray); s_gray = NULL; snprintf(s_message,sizeof(s_message),"%s","解码失败或内存不足"); return false; }
     s_width = fit_w; s_height = fit_h; s_selected = index; s_viewing = true;
     s_message[0] = 0;
     return true;

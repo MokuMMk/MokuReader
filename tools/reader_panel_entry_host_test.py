@@ -26,7 +26,8 @@ typedef enum{APP_REDRAW_NONE,APP_REDRAW_AREA,APP_REDRAW_PAGE}app_redraw_t;
 enum{READING,SHELF,READER_PANEL_TOOLS,READER_PANEL_NONE,READER_PANEL_FONT_SETTINGS,READER_PANEL_REFRESH_SETTINGS};
 enum{UI_GESTURE_PRESS,UI_GESTURE_TAP,UI_GESTURE_CANCEL};
 static int s_view,s_reader_panel,s_pressed_control,painted,actions;
-static bool s_scan_pending,s_clear_confirm;
+static bool s_scan_pending,s_clear_confirm,s_reader_fullscreen;
+static int metalio_haptic_click(void){return 0;}
 static int control_at(app_ctx_t*c,int x,int y,EpdRect*r){(void)c;(void)y;*r=(EpdRect){x,100,50,70};return x;}
 static app_redraw_t paint_control(app_ctx_t*c,EpdRect r){(void)c;(void)r;++painted;return APP_REDRAW_AREA;}
 static int app_settings_shelf_style(void){return 0;}
@@ -66,7 +67,7 @@ int main(void){
  for(int context=0;context<2;++context){
   reset();if(context)s_view=SHELF;else s_reader_panel=READER_PANEL_NONE;
   ui_gesture_event_t e={UI_GESTURE_PRESS,203,1100,203,1100};
-  assert(event(&ctx,&e)==APP_REDRAW_AREA&&painted==1);
+  assert(event(&ctx,&e)==(context?APP_REDRAW_AREA:APP_REDRAW_NONE)&&painted==context);
  }
  reset();ui_gesture_event_t e={UI_GESTURE_TAP,204,1100,204,1100};
  assert(event(&ctx,&e)==APP_REDRAW_PAGE&&actions==1&&!painted);

@@ -9,6 +9,7 @@
 typedef struct {
     online_font_status_t status;
     bool installed[ONLINE_FONT_COUNT],reading,closed,confirm_cancel,leave_after_cancel;
+    bool onboarding,english;
     int64_t updated_ms;
     unsigned painted_percent;
 } ui_online_fonts_t;

@@ -2,6 +2,9 @@
  * 中文：顶部边缘识别器只产出快捷动作，不访问页面、硬件或刷新。
  * English: The top-edge recognizer emits quick actions without accessing pages, hardware or presentation.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_quick_menu.h"
 #include <stdlib.h>
 #include <string.h>

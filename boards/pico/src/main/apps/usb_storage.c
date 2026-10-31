@@ -6,6 +6,9 @@
  * 冻结：固件和电脑绝不同时挂载 TF 卡；主机弹出时也不自动挂载到第二路径；不自动格式化。
  * Frozen: Firmware and host never mount SD together, including host eject; never auto-format.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_avatar.h"
 #include "book_cover_jobs.h"
 #include "book_lock_collage.h"
