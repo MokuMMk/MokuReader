@@ -9,6 +9,7 @@
 #include "../main/apps/app_transfer.c"
 #include <assert.h>
 #include "../components/read_pico_transfer/transfer_signature.h"
+int metalio_haptic_click(void){return ESP_OK;}
 static bool test_usb_active;
 static esp_err_t test_usb_stop_error;
 esp_err_t usb_storage_start(void) { test_usb_active = true; return ESP_OK; }
@@ -203,7 +204,8 @@ int main(void) {
     assert(s_network_count == 8 && !s_scan_pending);
     test_configured = s_saved_configured = true;
     tap(&ctx, (EpdRect){540, UI_NAV_TOP + 16, 20, 20});
-    assert(test_nav_index == 3);
+    // 底栏由真实app_loop统一处理，子页手势本身不派发导航。/ app_loop owns navigation; page gestures do not dispatch it.
+    assert(test_nav_index == -1);
     test_nav_index = -1;
     assert(s_view == TRANSFER_NETWORKS);
     tap(&ctx, network_control_rect(11));
@@ -300,8 +302,42 @@ int main(void) {
     tap(&ctx, (EpdRect){540, UI_NAV_TOP + 16, 20, 20});
     assert(test_stop_count == stops_before && test_nav_index == -1);
     test_busy = false;
+#if KIIKO_BOARD_METALIO47
+    // Small live progress is bounded to the two-second poll, with failed scans retried.
+    s_status.state=READ_PICO_TRANSFER_READY;test_status.state=READ_PICO_TRANSFER_UPLOADING;
+    strcpy(test_status.cur_name,"font-one.ttf");
+    test_status.cur_total=100000;test_status.cur_bytes=32000;s_poll_ms=0;ctx.now_ms=3000;
+    assert(on_tick(&ctx)==APP_REDRAW_AREA&&s_status.state==READ_PICO_TRANSFER_UPLOADING&&s_status.cur_bytes==32000);
+    int scans=test_display_calls;
+    assert(present(&ctx,APP_REDRAW_AREA)&&test_display_calls==scans+1);
+    assert(test_display_wave==display_main_bw_waveform()&&test_display_mode==MODE_DU);
+    EpdRect card=status_rect();
+    assert(test_display_area.x>card.x&&test_display_area.y>card.y);
+    assert(test_display_area.width<card.width&&test_display_area.height<card.height);
+    assert(test_display_area.y+test_display_area.height<card.y+190);
+    test_status.cur_bytes=64000;ctx.now_ms+=1000;
+    assert(on_tick(&ctx)==APP_REDRAW_NONE&&test_display_calls==scans+1);
+    ctx.now_ms+=1000;
+    assert(on_tick(&ctx)==APP_REDRAW_AREA&&s_status.cur_bytes==64000);
+    test_display_error=1;
+    assert(present(&ctx,APP_REDRAW_AREA)&&s_progress_pending);
+    ctx.now_ms+=2000;
+    assert(on_tick(&ctx)==APP_REDRAW_AREA); // Unchanged bytes must still retry.
+    test_display_error=0;
+    assert(present(&ctx,APP_REDRAW_AREA)&&!s_progress_pending);
+    ctx.now_ms+=2000;
+    assert(on_tick(&ctx)==APP_REDRAW_NONE);
+    strcpy(test_status.cur_name,"font-two.ttf");ctx.now_ms+=2000;
+    assert(on_tick(&ctx)==APP_REDRAW_AREA);
+    assert(present(&ctx,APP_REDRAW_AREA));
+    test_status.state=READ_PICO_TRANSFER_ERROR;test_status.last_error=ESP_FAIL;ctx.now_ms+=2000;
+    assert(on_tick(&ctx)==APP_REDRAW_AREA&&!s_progress_pending);
+    test_status.last_error=ESP_OK;
+    test_status.state=READ_PICO_TRANSFER_READY;ctx.now_ms+=3000;
+    assert(on_tick(&ctx)!=APP_REDRAW_NONE);
+#endif
     test_status.changed_count = 1;
-    ctx.now_ms = 3000;
+    s_poll_ms=0;ctx.now_ms = 3000;
     assert(on_tick(&ctx) == APP_REDRAW_AREA);
     assert(s_status.changed_count == 1);
     s_session_started = true;
