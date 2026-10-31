@@ -42,37 +42,44 @@ static void test_body_deadline(void) {
 #define READ_PICO_TRANSFER_NVS_TEST
 typedef int esp_err_t;
 typedef unsigned nvs_handle_t;
-enum { ESP_OK, ESP_ERR_NVS_NOT_FOUND, ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_ARG, ESP_FAIL };
+enum { ESP_OK, ESP_ERR_NVS_NOT_FOUND, ESP_ERR_INVALID_STATE, ESP_ERR_INVALID_ARG, ESP_FAIL, ESP_ERR_NO_MEM };
 enum { NVS_READONLY, NVS_READWRITE };
-static transfer_credentials_t committed, staged;
-static bool present, pending_present;
-static int fail_open, fail_write, fail_commit, handles;
-static esp_err_t nvs_open(const char *name, int mode, nvs_handle_t *handle) {
-    assert(!strcmp(name, "rp_wifi")); (void)mode;
-    if (fail_open) return ESP_FAIL;
-    ++handles; *handle = 1; staged = committed; pending_present = present; return ESP_OK;
+typedef struct { unsigned char bytes[1024];size_t size;bool present; } mock_blob_t;
+static mock_blob_t committed[2], staged[2];
+static int fail_open,fail_write,fail_commit,fail_read,handles,writes;
+static unsigned key_index(const char *key){
+    if(!strcmp(key,"credentials"))return 0;
+    assert(!strcmp(key,"networks_v1"));return 1;
 }
-static esp_err_t nvs_get_blob(nvs_handle_t handle, const char *key, void *out, size_t *size) {
-    assert(handle == 1 && !strcmp(key, "credentials"));
-    if (!present) return ESP_ERR_NVS_NOT_FOUND;
-    assert(*size >= sizeof(committed)); *size = sizeof(committed); memcpy(out, &committed, *size); return ESP_OK;
+static esp_err_t nvs_open(const char *name,int mode,nvs_handle_t *handle){
+#if KIIKO_BOARD_METALIO47
+    assert(!strcmp(name,"metalio_wifi"));
+#else
+    assert(!strcmp(name,"rp_wifi"));
+#endif
+    (void)mode;if(fail_open)return ESP_FAIL;
+    assert(!handles);++handles;*handle=1;memcpy(staged,committed,sizeof(staged));return ESP_OK;
 }
-static esp_err_t nvs_set_blob(nvs_handle_t handle, const char *key, const void *in, size_t size) {
-    assert(handle == 1 && !strcmp(key, "credentials") && size == sizeof(staged));
-    if (fail_write) return ESP_FAIL;
-    memcpy(&staged, in, size); pending_present = true; return ESP_OK;
+static esp_err_t nvs_get_blob(nvs_handle_t handle,const char *key,void *out,size_t *size){
+    assert(handle==1);if(fail_read)return ESP_FAIL;
+    mock_blob_t *blob=&committed[key_index(key)];
+    if(!blob->present)return ESP_ERR_NVS_NOT_FOUND;
+    if(*size<blob->size)return ESP_ERR_INVALID_STATE;
+    *size=blob->size;memcpy(out,blob->bytes,*size);return ESP_OK;
 }
-static esp_err_t nvs_erase_key(nvs_handle_t handle, const char *key) {
-    assert(handle == 1 && !strcmp(key, "credentials"));
-    if (fail_write) return ESP_FAIL;
-    pending_present = false; return present ? ESP_OK : ESP_ERR_NVS_NOT_FOUND;
+static esp_err_t nvs_set_blob(nvs_handle_t handle,const char *key,const void *in,size_t size){
+    assert(handle==1&&size<=sizeof(staged[0].bytes));if(fail_write)return ESP_FAIL;
+    mock_blob_t *blob=&staged[key_index(key)];memcpy(blob->bytes,in,size);blob->size=size;blob->present=true;++writes;return ESP_OK;
 }
-static esp_err_t nvs_commit(nvs_handle_t handle) {
-    assert(handle == 1);
-    if (fail_commit) return ESP_FAIL;
-    committed = staged; present = pending_present; return ESP_OK;
+static esp_err_t nvs_erase_key(nvs_handle_t handle,const char *key){
+    assert(handle==1);if(fail_write)return ESP_FAIL;
+    mock_blob_t *blob=&staged[key_index(key)];bool was=blob->present;memset(blob,0,sizeof(*blob));return was?ESP_OK:ESP_ERR_NVS_NOT_FOUND;
 }
-static void nvs_close(nvs_handle_t handle) { assert(handle == 1); --handles; clear_secret(&staged, sizeof(staged)); }
+static esp_err_t nvs_commit(nvs_handle_t handle){
+    assert(handle==1);if(fail_commit)return ESP_FAIL;
+    memcpy(committed,staged,sizeof(committed));return ESP_OK;
+}
+static void nvs_close(nvs_handle_t handle){assert(handle==1&&handles==1);--handles;clear_secret(staged,sizeof(staged));}
 #include "../components/read_pico_transfer/transfer_credentials_store.h"
 
 static bool parse(const char *json, transfer_credentials_t *c) { return parse_credentials(json, strlen(json), c); }
@@ -110,23 +117,72 @@ int main(void) {
     assert(parse("{\"ssid\":\"家庭 WiFi\",\"password\":\"12345678\"}", &c));
     assert(!strcmp(c.ssid, "家庭 WiFi"));
     assert(parse("{\"ssid\":\"open\",\"password\":\"\"}", &c));
-    assert(store_credentials(&c) == ESP_OK && present && !handles);
     transfer_credentials_t old;
-    assert(load_credentials(&old) == ESP_OK && !strcmp(old.ssid, "open"));
-    strcpy(c.ssid, "replacement"); fail_write = 1;
-    assert(store_credentials(&c) == ESP_FAIL && !handles);
-    assert(load_credentials(&old) == ESP_OK && !strcmp(old.ssid, "open"));
-    fail_write = 0; fail_commit = 1;
-    assert(store_credentials(&c) == ESP_FAIL && !handles);
-    assert(load_credentials(&old) == ESP_OK && !strcmp(old.ssid, "open"));
-    assert(store_credentials(NULL) == ESP_FAIL && present && !handles);
-    fail_commit = 0; fail_open = 1;
-    assert(store_credentials(&c) == ESP_FAIL && !handles);
-    assert(load_credentials(&old) == ESP_FAIL && old.version == 0);
-    fail_open = 0;
-    assert(store_credentials(NULL) == ESP_OK && !present && !handles);
-    assert(load_credentials(&old) == ESP_OK && old.version == 0);
-    assert(store_credentials(NULL) == ESP_OK && !handles);
+    assert(store_credentials(&c)==ESP_OK&&!handles);
+    assert(load_credentials(&old)==ESP_OK&&!strcmp(old.ssid,"open"));
+    strcpy(c.ssid,"replacement");fail_write=1;
+    assert(store_credentials(&c)==ESP_FAIL&&!handles);
+    assert(load_credentials(&old)==ESP_OK&&!strcmp(old.ssid,"open"));
+    fail_write=0;fail_commit=1;
+    assert(store_credentials(&c)==ESP_FAIL&&!handles);
+    assert(load_credentials(&old)==ESP_OK&&!strcmp(old.ssid,"open"));
+    assert(store_credentials(NULL)==ESP_FAIL&&!handles);
+    fail_commit=0;fail_open=1;
+    assert(store_credentials(&c)==ESP_FAIL&&!handles);
+    assert(load_credentials(&old)==ESP_FAIL&&old.version==0);
+    fail_open=0;
+    assert(store_credentials(NULL)==ESP_OK&&!handles);
+    assert(load_credentials(&old)==ESP_OK&&old.version==0);
+    assert(store_credentials(NULL)==ESP_OK&&!handles);
+    // 旧记录迁移与八网络MRU；仅连接成功的记录可直连，密码变化重新确认。
+    // Migrate legacy data and keep eight MRU profiles; only successful connections qualify, and changed passwords need confirmation.
+    memset(committed,0,sizeof(committed));
+    assert(credentials_from_text("legacy","12345678",&c));
+    committed[0].present=true;committed[0].size=sizeof(c);memcpy(committed[0].bytes,&c,sizeof(c));
+    bool confirmed=false;
+    assert(find_saved_credentials("legacy",&old,&confirmed)==ESP_OK&&confirmed&&!strcmp(old.password,"12345678"));
+    for(int i=0;i<9;++i){
+        char name[20];snprintf(name,sizeof(name),"saved-%d",i);
+        assert(credentials_from_text(name,"12345678",&c)&&store_credentials(&c)==ESP_OK);
+        assert(find_saved_credentials(name,&old,&confirmed)==ESP_OK&&!confirmed);
+        assert(confirm_current_credentials()==ESP_OK);
+        assert(find_saved_credentials(name,&old,&confirmed)==ESP_OK&&confirmed);
+    }
+    assert(find_saved_credentials("legacy",&old,NULL)==ESP_ERR_NVS_NOT_FOUND);
+    assert(find_saved_credentials("saved-0",&old,NULL)==ESP_ERR_NVS_NOT_FOUND);
+    assert(find_saved_credentials("saved-1",&old,NULL)==ESP_OK);
+    int before=writes;assert(confirm_current_credentials()==ESP_OK&&writes==before);
+    assert(find_saved_credentials("saved-1",&c,NULL)==ESP_OK&&store_credentials(&c)==ESP_OK);
+    assert(load_credentials(&old)==ESP_OK&&!strcmp(old.ssid,"saved-1"));
+    assert(find_saved_credentials("saved-1",&old,&confirmed)==ESP_OK&&confirmed);
+    strcpy(c.password,"87654321");assert(store_credentials(&c)==ESP_OK);
+    assert(find_saved_credentials("saved-1",&old,&confirmed)==ESP_OK&&!confirmed);
+    read_pico_transfer_network_t saved_scan[3]={
+        {.ssid="saved-1",.requires_password=true,.saved=true},
+        {.ssid="saved-2",.requires_password=true},
+        {.ssid="saved-2",.requires_password=false,.saved=true}};
+    mark_saved_networks(saved_scan,3);assert(!saved_scan[0].saved&&saved_scan[1].saved&&!saved_scan[2].saved);
+    assert(confirm_current_credentials()==ESP_OK);mark_saved_networks(saved_scan,3);assert(saved_scan[0].saved);
+    assert(forget_current_credentials()==ESP_OK&&!committed[0].present);
+    assert(find_saved_credentials("saved-1",&old,NULL)==ESP_ERR_NVS_NOT_FOUND);
+    assert(find_saved_credentials("saved-2",&old,&confirmed)==ESP_OK&&confirmed);
+    assert(load_credentials(&old)==ESP_OK&&!strcmp(old.ssid,"saved-8"));
+    assert(credentials_from_text("public","",&c)&&store_credentials(&c)==ESP_OK&&confirm_current_credentials()==ESP_OK);
+    saved_scan[0]=(read_pico_transfer_network_t){.ssid="public"};mark_saved_networks(saved_scan,1);assert(saved_scan[0].saved);
+    mock_blob_t bank_snapshot=committed[1];fail_commit=1;
+    assert(forget_current_credentials()==ESP_FAIL&&!memcmp(&bank_snapshot,&committed[1],sizeof(bank_snapshot)));
+    fail_commit=0;fail_read=1;memset(&old,0xff,sizeof(old));
+    assert(load_credentials(&old)==ESP_FAIL&&old.version==0&&!handles);
+    saved_scan[0].saved=true;mark_saved_networks(saved_scan,1);assert(!saved_scan[0].saved);fail_read=0;
+    committed[1].size--;assert(load_credentials(&old)==ESP_ERR_INVALID_STATE&&old.version==0);
+    committed[1]=bank_snapshot;committed[1].bytes[0]^=1;
+    assert(store_credentials(&c)==ESP_ERR_INVALID_STATE&&!handles);
+    committed[1]=bank_snapshot;
+    transfer_wifi_bank_t malformed;memcpy(&malformed,committed[1].bytes,sizeof(malformed));
+    malformed.reserved[0]=1;assert(!credentials_bank_valid(&malformed));malformed.reserved[0]=0;
+    malformed.count=9;assert(!credentials_bank_valid(&malformed));malformed.count=2;
+    malformed.items[1]=malformed.items[0];assert(!credentials_bank_valid(&malformed));
+    assert(store_credentials(NULL)==ESP_OK&&load_credentials(&old)==ESP_OK&&!old.version&&!handles);
     const char *bad[] = {"{}", "[]", "null", "{\"ssid\":\"\",\"password\":\"12345678\"}",
         "{\"ssid\":\"home\",\"password\":12345678}", "{\"ssid\":\"home\",\"password\":\"short\"}",
         "{\"ssid\":\"home\",\"password\":\"12345678\"}x", "{\"ssid\":\"home\\u0000x\",\"password\":\"12345678\"}",

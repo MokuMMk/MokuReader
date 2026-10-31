@@ -20,14 +20,15 @@ u=r'''
 #define BOOK_MARGIN_MAX 48
 #define BOOK_MARGIN_CHOICES 9
 typedef struct {int x,y,width,height;} EpdRect;
-static bool s_reader_fullscreen,vertical;
+static bool s_reader_fullscreen,vertical,immersive;
 static int s_margin;
-static bool app_settings_reader_immersive(void){return false;}
+static bool app_settings_reader_immersive(void){return immersive;}
 static bool app_settings_book_vertical(void){return vertical;}
 static unsigned s_book_indent_adjust=20;
 static void nvs_put_u8(const char *key,uint8_t v){(void)key;assert(v==s_book_indent_adjust);}
 #define NVS_KEY_BOOK_INDENT_ADJUST "bk_indent_adj"
 '''
+u+='\n'.join(line for line in (r/'main/ui/ui_reader_layout.h').read_text().splitlines() if not line.startswith(('#include','#pragma'))) + '\n'
 settings=(r/'main/settings.h').read_text()
 for name in ('APP_BOOK_TRACK_MIN','APP_BOOK_TRACK_MAX','APP_BOOK_TRACK_COUNT','APP_BOOK_PARAGRAPH_COUNT'):
     u+=re.search(r'^#define '+name+r' .*',settings,re.M)[0]+'\n'
@@ -61,10 +62,10 @@ int main(void){
   for(int i=0;i<9;++i){assert(values[i]==i*6&&widths[i]==684-i*12);assert(reader_margin_level_for(i*6,px,tr)==i);}
   for(int i=0;i<=48;++i)assert(reader_margin_for_level(reader_margin_level_for(i,px,tr),i,px,tr)==i);
  }
- for(int full=0;full<2;++full)for(int v=0;v<2;++v){
-  s_reader_fullscreen=full;vertical=v;
+ for(int full=0;full<2;++full)for(int im=0;im<2;++im)for(int v=0;v<2;++v){
+  s_reader_fullscreen=full;immersive=im;vertical=v;
   for(int i=0;i<9;++i){s_margin=i*6;EpdRect a=body_rect_for_tracking(2);
-   if(v){assert(a.y==(full?96:188)+s_margin);assert(a.height==(full?1196:1128)-(full?96:188)-2*s_margin);}
+   if(v){assert(a.y==(!full?176:im?24:52)+s_margin);assert(a.height==(!full?1076:im?1202:1168)-(!full?176:im?24:52)-2*s_margin);}
    else assert(a.x==s_margin&&a.width==684-2*s_margin);
   }
  }

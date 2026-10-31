@@ -1,4 +1,7 @@
 /* SPDX-License-Identifier: Apache-2.0 */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_reader_background.h"
 #include <stdlib.h>
 #include <string.h>

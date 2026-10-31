@@ -9,6 +9,9 @@
  * Power, PIN and top quick surfaces share it; PSRAM workspace is released after painting.
  * Frozen: no hardware writes, display calls, or retained framebuffer caches.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_glass.h"
 #include "ui_kit.h"
 #include "ui_image_dither.h"
@@ -24,7 +27,11 @@
 #define GAUSS_TAPS (2 * GAUSS_RADIUS + 1)
 #define UI_GLASS_FLOOR 2
 #define UI_GLASS_INK_ALPHA 20
+#if KIIKO_BOARD_METALIO47
+#define UI_GLASS_MAX_PIXELS (UI_LOCK_WIDTH * 384u)
+#else
 #define UI_GLASS_MAX_PIXELS (UI_LOCK_WIDTH * 160u)
+#endif
 static const uint8_t s_gauss[GAUSS_TAPS]={9,28,55,72,55,28,9};
 static const uint8_t s_reader_gauss[GAUSS_TAPS]={20,34,47,54,47,34,20};
 static uint8_t s_disp[REFRACT_SAMPLES+1],s_spec[REFRACT_SAMPLES+1];

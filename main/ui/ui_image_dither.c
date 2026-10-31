@@ -3,6 +3,9 @@
  * 用户要求快刷封面稍微加深：白色混入从1/8降为1/16，仍输出黑白端点，不改变亚克力或刷新次数。
  * User requests slightly darker fast covers: reduce the white lift from 1/8 to 1/16, retaining binary output without changing acrylic or refresh counts.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_image_dither.h"
 
 uint8_t ui_image_dither_gray(uint8_t gray, int x, int y) {

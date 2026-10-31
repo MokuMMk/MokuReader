@@ -102,14 +102,14 @@ WiFi 和热点传书网页都有「状态栏签名」，保存或清空后写入
 
 ## 自行编译
 
-需要 ESP-IDF **v6.1**，目标芯片为 ESP32-S3：
+仓库只有一份共享的 `main/` 与 `components/` 源码；`boards/<板型>/` 提供硬件后端、sdkconfig、分区表和依赖锁。用 `--board pico|metalio47` 选择设备，并准备对应的 ESP-IDF **v6.1** SDK：
 
 ```sh
-idf.py set-target esp32s3
-idf.py build
+python3 tools/build_firmware.py --board pico --python /path/to/idf-python/bin/python
+python3 tools/build_firmware.py --board metalio47 --python /path/to/idf-python/bin/python
 ```
 
-`sdkconfig.defaults` 使用本开发板对应的 Flash/PSRAM 时序；`sdkconfig.ci` 仅用于编译检查。硬件资料请看 [MindReset 官方文档](https://dot.mindreset.tech/docs/read_0)。预编译固件仅面向 RDP-G01-W。
+Pico 是 ESP32-S3（Xtensa），Metalio 是 ESP32-S31（RISC-V）；两者需要各自的 SDK/工具链、配置和输出目录，固件不能跨板型刷写。Windows 可运行 `tools\build_board.ps1 -Board pico|metalio47`。完整构建矩阵、分区表和烧录地址见 [docs/BOARDS.md](docs/BOARDS.md)。预编译固件仅面向 RDP-G01-W。
 
 ## 书籍与字体
 
@@ -177,3 +177,11 @@ EPUB 正文每章从新页开始，章节标题与正文开头同页；同一正
 
 头像首次裁切后会将原比例灰阶成品存到 TF 卡缓存；首页与资料卡按各自尺寸直接读取，不重解原图。更换或删除源图、缓存损坏时自动重建或回退默认头像。
 字重面板用横向胶囊的减/加按钮，每次微调 1/16 像素覆盖率，范围 −2 到 +2 像素，共 65 档；0 保留原始笔画。
+
+## 最新功能界面（未发布，两机同步）
+
+新配置及恢复出厂后进入语言、Wi-Fi、字体引导，已有配置升级不重复引导。系统界面可切换中英文，也可在设置中修改；书名、正文、文件名及输入保留原文。引导通过 U 盘或扫码 Wi-Fi 传输导入 TTF/OTF 字体，返回后重新扫描并分页选择，所选字体同时用于系统与阅读。联网后后台自动对时；保存失败保留引导。
+
+文件支持递归中文、拼音、首字母及英文搜索、列表/图标视图、跨页多选、移动到指定目录与确认删除；移动不覆盖同名目标，失败项保留勾选。书架管理可按名称、最近阅读、首次收录及升降序排列；已有图书在升级后首次扫描登记收录顺序。Wi-Fi 保存最多八个网络并标注可直连；开启蓝牙后尝试重连上次成功使用的已配对设备。
+
+新开书默认标准模式，常驻题头、系统状态和底部工具栏，不显示章节/进度。中间单击切换全屏，持久化的沉浸开关独立控制全屏样式：关闭沉浸时显示书名、章节/章数/百分比，开启后铺屏正文且只保留底部 3 像素进度线。翻页保持模式，切换保留阅读锚点，信息栏空闲后局部更新。底层驱动、供电/睡眠和阅读波形采用 PR #59，保留手动与周期清理，两块板各用自身硬件后端。

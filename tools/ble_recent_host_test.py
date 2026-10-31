@@ -6,12 +6,9 @@ from pathlib import Path
 import re,subprocess,tempfile
 root=Path(__file__).resolve().parents[1]
 source=(root/'components/ble_page_turner/src/ble_page_turner.c').read_text()
+from home_cover_cache_host_test import function as extract_function
 def function(name):
- start=re.search(r'^(?:static )?[^\n]+\b'+name+r'\([^;{}]*\)\s*\{',source,re.M);assert start,name
- at=start.end();depth=1
- while depth:
-  depth+=(source[at]=='{')-(source[at]=='}');at+=1
- return source[start.start():at]+'\n'
+ return extract_function(name,root/'components/ble_page_turner/src/ble_page_turner.c')
 unit=r'''
 #include <assert.h>
 #include <stdatomic.h>
@@ -49,6 +46,17 @@ static void nvs_close(nvs_handle_t h){assert(h==1||h==2);--handles;}
 static const char *bond_key(char *out,size_t cap,const char *addr){assert(addr[0]);snprintf(out,cap,"binding");return out;}
 esp_err_t ble_pt_connect(const char *addr){++connects;snprintf(connected_addr,sizeof(connected_addr),"%s",addr);return connect_error;}
 '''
+if 'esp_err_t ble_pt_forget(' in source:
+ unit+=r'''
+#include <strings.h>
+static bool s_running=true;
+static char s_conn_addr[18];
+static struct {char addr[18];} s_bindings;
+typedef struct {uint8_t type,val[6];} ble_addr_t;
+static bool ble_hs_synced(void){return true;}
+static int ble_store_util_delete_peer(const ble_addr_t *peer){assert(peer);return 0;}
+static void ble_pt_disconnect(void){s_link_up=false;}
+'''
 for name in ['bonds_load','bonds_save','bond_find','bond_add','ble_pt_reconnect_recent','ble_pt_cancel_recent','reconnect_recent_requested','ble_pt_reset_failure','ble_pt_forget']:
  unit+=function(name)
 unit+=r'''
@@ -84,6 +92,6 @@ int main(void){
 poll=function('poll_locked');assert poll.index('if (!s_running) return;')<poll.index('reconnect_recent_requested();')
 assert 'BLE_PT_RECONNECT_MS' in poll and '!s_scanning' in poll
 with tempfile.TemporaryDirectory(prefix='kiiko-ble-recent-') as tmp:
- p=Path(tmp);(p/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\nenum {ESP_OK,ESP_FAIL};\n');(p/'test.c').write_text(unit)
+ p=Path(tmp);(p/'esp_err.h').write_text('#pragma once\ntypedef int esp_err_t;\nenum {ESP_OK,ESP_FAIL,ESP_ERR_INVALID_ARG,ESP_ERR_INVALID_STATE,ESP_ERR_NOT_FOUND};\n');(p/'test.c').write_text(unit)
  subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-Wno-misleading-indentation','-fsanitize=address,undefined','-I'+tmp,'-I'+str(root/'components/ble_page_turner/include'),str(p/'test.c'),'-o',str(p/'test')],check=True)
  subprocess.run([str(p/'test')],check=True)

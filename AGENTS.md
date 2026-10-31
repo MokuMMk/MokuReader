@@ -8,21 +8,35 @@ Agent entry for this tree. Humans can read it too. Product overview, hardware, p
 
 Newcomers (human or agent): read [docs/ONBOARDING.md](docs/ONBOARDING.md). Taking over an in-flight task: read [docs/HANDOFF.md](docs/HANDOFF.md) first.
 
+## 当前工作：双板型本地整合 / Current work: local multi-board integration
+
+用户2026-10-31指定合并PR59：底层驱动、供电/睡眠及阅读波形以PR59为准，功能界面以本机7278bd2为基线接入最新引导、语言、管理与阅读状态。此指令取代此前本地缓存保护和阅读波形回退决定；板型隔离与禁止永久OTP/eFuse写入仍适用。
+User decision2026-10-31: merge PR59's drivers, power/sleep and reader waveforms, integrating the latest setup/locale/management/reader state from local7278bd2. This supersedes prior local cache-guard and waveform rollback choices; board isolation and permanent OTP/eFuse prohibitions remain.
+
+用户2026-10-18明确要求同一源码选择pico/metalio47编译，取代两套独立维护应用源码的要求。共享阅读/UI保留同一份文件，平台驱动由boards选择；不得把S31供电/波形/引脚/分区用于S3。用户2026-10-25明确要求将Metalio-S31-kiikoread仓库公开，取代此前源码私有的限制；此后统一仓库main维护两板源码，沿用现有分文件许可和第三方权利。官网继续按白名单发布已验证固件与安装资源，源码公开不改变官网部署范围。
+The user explicitly requested one source tree for pico/metalio47 on 2026-10-18. Shared reader/UI code lives once; boards select platform drivers. Never apply S31 power, waveforms, pins or partitions to S3. On 2026-10-25 the user explicitly requested making Metalio-S31-kiikoread public, superseding the earlier private-source restriction. The unified main now maintains both boards with existing per-file licenses and third-party rights. Website deployment remains an allowlist of verified firmware and installer assets; repository visibility does not broaden the website artifact scope.
+
+构建入口tools/build_firmware.py，--board pico|metalio47|all；独立SDK/配置/构建/输出目录。芯片、项目名和分区必须匹配。Metalio原始GC48/GL48/DU20不得手改，供电和VCOM保留既有顺序；不得写永久TPS OTP或ESP eFuse。用户2026-10-19已明确授权直接调试连接的S31实现300ms，可按原MAC/精确分区/启动槽/已验证回退备份保护流程刷写本地调试与交付应用；该授权不包括其他设备、清数据或发布。调试USB命令入口不得留在最终交付固件。
+Use tools/build_firmware.py with --board pico|metalio47|all and separate SDK/config/build/output directories. Validate chip/project/partitions. Preserve Metalio's raw GC48/GL48/DU20, power/VCOM sequencing, and never write permanent TPS OTP or ESP eFuses. On 2026-10-19 the user explicitly authorized direct debugging of the connected S31 toward 300ms, including local diagnostic/delivery application writes guarded by the approved MAC, exact partitions/boot slot and verified recovery backup. This does not authorize other devices, erasing data or publication. Remove the diagnostic USB command reader from the final delivery firmware.
+
 ## 构建 / Build
 
-需要 ESP-IDF v6.1。`components/read_pico/read_pico_flash_hpm.c` 依赖 v6 才有的 `esp_flash_chips/spi_flash_override.h`。
+双板型统一入口是 `tools/build_firmware.py --board pico|metalio47|all`，先读 [docs/BOARDS.md](docs/BOARDS.md)。必须使用独立SDK/配置/依赖锁和产物目录；共享功能修改主源码，生成的设备视图不可作为维护源码。已有主机测试用 `board_source_view.py --tests` 生成指定设备视图后运行；CI分别选择Pico和S31，使用匹配SDK并隔离构建。
+Use the board build driver and isolated SDK/config/lock/artifact directories. Edit maintained sources, not generated device views. Legacy host tests run in the board test view. CI separately builds Pico and S31 with matching SDKs and isolated outputs.
+
+Pico需要 ESP-IDF v6.1。`components/read_pico/read_pico_flash_hpm.c` 依赖 v6 才有的 `esp_flash_chips/spi_flash_override.h`。
 
 Requires ESP-IDF v6.1. `components/read_pico/read_pico_flash_hpm.c` needs `esp_flash_chips/spi_flash_override.h` (v6 only).
 
 ```
-idf.py set-target esp32s3
-idf.py build
+python3 tools/build_firmware.py --board pico --python /path/to/idf-python/bin/python
+python3 tools/build_firmware.py --board metalio47 --python /path/to/idf-python/bin/python
 ```
 
-- `sdkconfig.defaults`：真机 120 MHz flash / PSRAM 时序，依赖板上 Zbit 型号。/ Board timing for 120 MHz flash / PSRAM; depends on the Zbit part.
-- `sdkconfig.ci`：默认时序，只验证能否编过。/ Default timing; compile-only CI check.
+- 板级选择层：`boards/<设备>/` 拥有身份、板级 sdkconfig、分区表、依赖锁与硬件后端；`cmake/board.cmake` 在 `project()` 之前选板，`-DKIIKO_BOARD=pico|metalio47`。/ Board selection layer: `boards/<device>/` owns identity, board sdkconfig, partitions, dependency lock and hardware back end; `cmake/board.cmake` selects before `project()`.
+- 板级配置只放在 `boards/<设备>/`，仓库根不再有 `sdkconfig.defaults`、`sdkconfig.ci` 或 `partitions*.csv` 副本；`tools/board_layer_host_test.py` 守着这条规则。/ Board config lives only under `boards/<device>/`; the repository root keeps no `sdkconfig.defaults`, `sdkconfig.ci` or `partitions*.csv` copies, and `tools/board_layer_host_test.py` enforces that.
 
-不要在没有对应 flash 的机器上把 CI 配置当产品默认。/ Do not ship the CI timing as the product default.
+两块板共用同一份 `main/`、`components/` 维护源码；只有硬件、驱动和确有平台差异的行为才放进 `boards/<设备>/src/` 覆盖。/ Both boards share one `main/` and `components/` source; only hardware, driver and platform-specific behaviour live in the `boards/<device>/src/` overlay.
 
 ### 版本号与本地测试 / Versions and local tests
 
@@ -39,6 +53,9 @@ Per the user's 2026-10-09 decision, publish every future official firmware versi
 
 GitHub Release 与官网刷机、TF 下载和联网 OTA 同步发布。保留官网现有刷机清单、固件及版本下载地址；OTA 清单继续使用固件允许的官方 HTTPS 域名。核对三种交付的版本、大小、校验值和基础包兼容性，避免影响正在刷机或升级的用户。本地测试仍只生成本地包，不创建正式 Release。
 Publish GitHub Releases alongside the web flasher, TF downloads and online OTA. Preserve existing website manifests, firmware and versioned download URLs; keep OTA URLs on the official HTTPS origin accepted by the firmware. Verify matching versions, sizes, checksums and base-layout compatibility across the deliveries so ongoing flashes and updates remain valid. Local tests remain local bundles without official Releases.
+
+用户2026-10-21要求每次保留上一正式版的官网刷机与TF下载入口。替换正式清单前，使用tools/archive_current_release.py归档原Release的四件套和校验值；releases.json保留历次归档，manifest.previous_version指向上一版，发布工具校验该入口存在。不得以本地同号测试包代替原正式字节。TF包是完整应用镜像；引导程序、分区表及用户存储不由TF升级写入，整机四件套继续通过USB安装。
+The user requires a previous-release web/TF entry for every publication. Archive the original Release parts with tools/archive_current_release.py before replacing metadata; retain earlier releases.json entries and verify manifest.previous_version. Never substitute a same-version local test. TF updates use a complete application image; bootloader, partition table and user storage remain untouched, with full base installation through USB.
 
 ## 目录职责 / Layout
 
@@ -105,6 +122,9 @@ One file, one `app_desc_t`. Order matches `app_registry.c`.
 
 To add a page: create it in `main/apps/`, implement its callbacks, and append it to `s_apps[]`. Use `on_before_lock` to flush state before lock rendering.
 
+首次引导是启动专用页 `app_onboarding`，不注册普通菜单；`setup_state` 在默认迁移写入前读取本板设置命名空间，新机/空配置先提交待完成标记，老配置无标记时不强制引导。恢复出厂保留的空命名空间等同新配置；跳过/完成提交成功才退出，失败不擦除用户数据。引导复用本板 U 盘/Wi-Fi 传输服务导入 TF 字体，联网后后台对时，不跨板复制蓝牙、睡眠或刷新参数。中英覆盖引导及系统界面，书籍与用户输入保留原文。
+Setup is a boot-only page, outside the normal registry. Read this board's setup state before default migrations; fresh/empty profiles persist Pending, legacy profiles without a marker skip setup. Skip/Finish must commit successfully; failure never erases user data. Reuse board services without copying Bluetooth, sleep or refresh parameters; bilingual coverage applies to setup and system UI while book/user content retains its text.
+
 ## `app_desc_t` 契约 / Contract
 
 定义在 [`main/app/app.h`](main/app/app.h)。主循环按返回值刷屏，见 [`main/app/app_loop.c`](main/app/app_loop.c) 的 `app_present()`。
@@ -130,9 +150,9 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 - `on_touch()` / `on_gesture()` / `on_key()` / `on_tick()`：可有副作用，用返回值要刷屏。/ Side effects OK; return the redraw.
 - `on_key_long()` 可选：仅接管三键的页面在同键单指保持500ms后触发一次；`defer_middle_short` 页面中键短按在抬起时执行，长按不触发短按；滑出、多点、读错、睡眠、字体重载或切页取消。/ Optional owned-key hold callback fires once at 500ms; with `defer_middle_short`, a middle short press fires on release and a hold skips it. Leaving, multitouch, read errors, sleep, font reload and page switches cancel.
 - `on_power_short()` 可选：页面可消费电源键短按；返回 `APP_REDRAW_NONE` 时主循环继续锁屏。阅读正文的“电源键翻页”开关开启后短按翻下一页，长按由主循环锁屏；其他页面保留原电源键逻辑。/ Optional short-power callback may consume the press; `APP_REDRAW_NONE` keeps the lock path. With reader power-turn enabled, short presses advance in the reader body and long presses lock; other pages keep their usual power behavior.
-- `on_media_ready()` 可选：首次无卡启动后插卡或显式重挂完成时通知当前页面更新目录；不要用它绕过拔卡后的句柄清理。/ Optional callback refreshes page listings after a first insertion or explicit remount; it must not bypass handle cleanup after removal.
+- `on_media_ready()` 可选：首次插卡、显式重挂或Pico后台恢复完成时通知当前页面更新目录；不得绕过失效后的句柄清理。/ Optional callback refreshes page listings after insertion, explicit remount or Pico background recovery; it must not bypass handle cleanup after invalidation.
 - `on_gesture()` 可选；提供后不再接收 `on_touch()`。主循环负责识别与全局中断取消，页面解释动作。/ Optional gesture callback replaces `on_touch`; the loop recognizes and cancels, the page interprets.
-- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键。主页面按用户2026-10-16修订：左右键循环切换四个主页，中键长按全刷；书架中键短按切换分页控制并沿左右箭头轮廓描边，可通过导航随时打断。系统子页仍左返回、中首页、右返回；阅读正文三键短按可自定义，两套推荐默认上一页/工具栏/下一页；底部上滑固定呼出工具栏，三键短按和中键长按不强制工具栏映射；中键长按可自定义，默认返回首页，中间双击切全屏独立于按键及翻页模式；新开书默认全屏，翻页关闭工具栏并回全屏。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu. Product system pages use Back/Home/Back; reader short actions are configurable, defaulting to previous/tools/next; bottom-edge swipes always open the toolbar without a required short/hold mapping; middle holds are configurable and default to home and center double taps toggle full screen independently of key/tap modes; new books open full screen and turns dismiss tools and return to full screen.
+- `on_key()` 默认只收 `UI_KEY_1`；`owns_keys` 页面在菜单关闭时接收三键。主页面按用户2026-10-16修订：左右键循环切换四个主页，中键长按全刷；书架中键短按切换分页控制并沿左右箭头轮廓描边，可通过导航随时打断。系统子页仍左返回、中首页、右返回；阅读正文三键短按可自定义，两套推荐默认上一页/工具栏/下一页；底部上滑固定呼出工具栏，三键短按和中键长按不强制工具栏映射；中键长按可自定义，默认返回首页，用户2026-10-30改为中间单击切换全屏，沉浸偏好独立控制全屏样式；新开书默认标准模式及底部工具栏，不画进度信息，翻页保留模式；沉浸模式左上书名、下方章节和百分比及贴边进度。/ Normally KEY1 only; `owns_keys` pages receive all three outside the menu. Product system pages use Back/Home/Back; reader short actions are configurable, defaulting to previous/tools/next; bottom-edge swipes always open the toolbar without a required short/hold mapping; middle holds are configurable and default to home the user revised this on 2026-10-30: centre taps toggle fullscreen independently of the saved immersive style; new books open standard with tools and no footer metadata, turns retain the mode, and immersive reading has a top-left title and edge chapter/percentage/progress.
 
 标志：
 
@@ -141,6 +161,7 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 - `defer_middle_short`：中键短按在抬起时触发，以区分长按。/ Defer middle short action until release to distinguish a hold.
 - `menu_handle_enabled`：按页面状态决定右下角菜单把手是否响应。/ Control bottom-right menu-handle hit testing by page state.
 - `enter_full`：进页走 `APP_REDRAW_FULL`，避免差分刷留边。/ Enter with a full refresh.
+- `navigation_visible`：可选查询；自有操作栏替代主导航时返回 false，让内容刷新包含完整底部。与只禁止点击的 `navigation_enabled` 分开。/ Optional visibility query: false for a custom action bar so page scans include the full bottom, independently of navigation input admission.
 
 `app_ctx_t.request_app` 非空时，主循环在本轮末尾切页；`request_menu` 请求打开根菜单。同时设置时切页优先。/ At tick end, `request_app` switches pages and `request_menu` opens the root menu; a page request takes priority.
 
@@ -159,7 +180,7 @@ Defined in [`main/app/app.h`](main/app/app.h). The loop presents via `app_presen
 | 冻结 / Frozen | 文件头里的产品决策。agent 不得改行为去“优化”它。 | Product decisions in the file banner. Do not “improve” them. |
 | 均衡配置 | `APP_REFRESH_BALANCED`：整页 GL16，周期 GC16 压灰底，动态区 DU。 | Default refresh profile: GL16 pages, periodic GC16, DU for motion. |
 | ALL_DU | 实验档：整机都走 DU，只看速度。 | Experimental profile: everything is DU. |
-| 锁屏 | 电源键短按后的锁页。浅睡按键或拿起回原页。 | Lock face after a short power-key press. |
+| 锁屏 | 电源键短按后的锁页。2026-10-19用户改为双击电源键才唤醒，有密码时继续验证。 | Lock face after a short press; per the 2026-10-19 user decision, double-press power to wake, then verify an enabled PIN. |
 | 软睡 | `SOFT_SLEEP`：PMU 拉低 EN，再短按开机，不是硬复位。 | Soft sleep: PMU drops EN; a short press powers on without a hard reset. |
 | VCOM | 面板公共电压（绝对值 mV）。出厂写入 PMU，主机只读。 | Panel common voltage (absolute mV). Factory-written in the PMU; host is read-only. |
 
@@ -215,13 +236,11 @@ Every comment is bilingual. Comments only; no logic changes.
 - 大 `.c` 用 `/* ---- 区块名 / Section ---- */` 分区。/ Large `.c` files use section banners.
 - 术语见表，不在注释里重复解释。/ Use the glossary; do not redefine terms.
 
-## Previous official release / 上一正式版
-
-用户2026-10-21要求修复官网OTA，不切换GitHub固件镜像。发布前及证书续期后按 `docs/OTA_MAINTENANCE.md` 检查原正式固件的信任链兼容性、完整下载与Range续传，并用已发布设备实测。不要以浏览器访问成功替代设备证书验证，不关闭TLS/SHA校验。
-The user requires repairing the official OTA origin without a GitHub firmware mirror. Follow `docs/OTA_MAINTENANCE.md` before releases and after certificate renewal; validate released trust stores, downloads/resumes and an actual released device, retaining TLS/SHA verification.
-
 每个正式版本同时保留USB全量包与TF升级包，官网按所选版本分别提供下载入口。TF应用Bin保留兼容文件名Pico-update.bin，ZIP可附说明与校验值；不得将USB全量包当作TF升级镜像。
 Retain both USB full base packages and TF application upgrades for each official release, with separate version-matched website downloads. Keep Pico-update.bin for TF compatibility; ZIPs may include instructions/checksums. Never present a USB base bundle as a TF upgrade image.
 
-Every official publication must archive the original previous Release with `tools/archive_current_release.py` before replacing the latest manifest. Keep its web-flashing/TF choices and immutable binary hashes, as well as all earlier archives. `manifest.previous_version` is checked during website staging. TF images replace the complete application in the inactive slot; full base installation remains USB.
-每次发布必须先归档上一正式版原字节，保留网页刷机与TF入口，不能用本地同号测试包替换；TF升级完整应用，不写引导程序和分区表。
+用户2026-10-21明确要求修复官网OTA，不切换GitHub固件镜像。OTA固件URL保持https://kiikoread.com/；备用清单不能自行更换固件下载源，证书链问题须在官网或经确认的兼容固件中修复，保持TLS/SHA校验。
+The user explicitly requires the official OTA origin, not a GitHub firmware mirror. Keep firmware URLs on https://kiikoread.com/; do not change the download origin through fallback metadata. Repair certificate compatibility on the site or in approved firmware while retaining TLS and SHA checks.
+
+发布前及证书续期后按 `docs/OTA_MAINTENANCE.md` 运行原正式固件信任链、完整下载和Range检查，并用已发布设备验收；浏览器可用不能代替设备校验。临时Cloudflare令牌不入仓库。
+Before publication and after certificate renewal, run the released-trust-store, download and Range checks in `docs/OTA_MAINTENANCE.md`, plus a released-device acceptance test. Browser success is insufficient; never commit temporary Cloudflare credentials.

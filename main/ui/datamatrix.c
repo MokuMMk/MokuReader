@@ -7,6 +7,9 @@
  * ECC200 square Data Matrix: ASCII encode, Reed-Solomon, and utah placement.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "datamatrix.h"
 
 #include <string.h>

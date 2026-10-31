@@ -2,6 +2,9 @@
  * 中文：显式白名单恢复系统设置；不擦NVS分区，不触及VCOM、OTA元数据或TF文件。
  * English: Reset an explicit namespace allowlist, never whole NVS, VCOM, OTA metadata or TF files.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "factory_reset.h"
 #include "kiiko_board_config.h"
 #include "nvs.h"
@@ -9,7 +12,11 @@
 esp_err_t app_factory_reset(void) {
     const char *names[] = {
         KIIKO_BOARD_SETTINGS_NAMESPACE, KIIKO_BOARD_STARTUP_NAMESPACE,
+#if KIIKO_BOARD_METALIO47
+        "metalio_wifi", "metalio_light", "metalio_haptic",
+#else
         "rp_wifi",
+#endif
         "rp_blestate", "rp_blebind", "rp_blebond", "nimble_bond",
         // 凭据最后处理；上面的存储失败不提前移除密码。/ Process credentials last, after other namespaces succeed.
         KIIKO_BOARD_LOCK_NAMESPACE

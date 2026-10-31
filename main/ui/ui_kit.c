@@ -14,6 +14,9 @@
  * User fix: directory titles share this path and blend antialiasing into their row background without white fringes.
  */
 
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_kit.h"
 
 #include <string.h>
@@ -327,6 +330,10 @@ void ui_text(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     px = ui_text_effective_px(px);
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
@@ -336,6 +343,10 @@ void ui_text(
 }
 
 void ui_text_line_span_px(int px, const char* text, int* above, int* below) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     // 与 ui_text 完全同一条字体路径：内置位图与 TTF 的字面高度不同，换字体后按实测排。
     // Exactly the ui_text face path: the bitmap and TTF faces differ in ink height, so layout
     // follows the measured extents after any face change.
@@ -349,8 +360,11 @@ void ui_text_line_span_px(int px, const char* text, int* above, int* below) {
     if (above) *above = a;
     if (below) *below = b;
 }
-
 int ui_text_ink_center_y(int y_top, int px, const char *text) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     // ui_text 把基线放在 y_top + ascender，墨迹自基线上下伸展（above/below 相对基线），
     // 因此墨迹中心 = 基线 - (above - below) / 2，与 ui_text_fixed_context_vc 的落笔公式同源。
     // ui_text puts the baseline at y_top + ascender with ink spreading around it, so the ink
@@ -370,10 +384,19 @@ int ui_text_ink_center_y(int y_top, int px, const char *text) {
 }
 
 int ui_text_fixed_width_px(int px, const char* text) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     return ui_text_fixed_context_width_px(px, text, text);
 }
 
 int ui_text_fixed_context_width_px(int px, const char* text, const char* font_sample) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if (!text || px <= 0) return 0;
     return (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(font_sample ? font_sample : text)
         ? ui_font_text_width_px(px, text)
@@ -384,6 +407,10 @@ void ui_text_fixed(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
     if ((!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text))
@@ -396,6 +423,10 @@ void ui_text_fixed_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     ui_text_fixed_context_vc(framebuffer, x, center_y, px, text, text, align, inverted);
 }
 
@@ -403,6 +434,11 @@ void ui_text_fixed_context_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     const char* font_sample, enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if (!framebuffer || !text || !text[0] || px <= 0) return;
     int above = 0, below = 0;
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
@@ -418,6 +454,10 @@ void ui_text_fixed_context_vc(
 
 void ui_text_box(uint8_t *fb, EpdRect box, int px, const char *text,
                  enum EpdFontFlags align, bool inverted) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     if (!fb || !text || !text[0] || box.width <= 0 || box.height <= 0) return;
     px = ui_text_effective_px(px);
     const bool builtin = (!s_system_ttf || ttf_font_is_builtin()) && ui_font_has_text(text);
@@ -444,6 +484,10 @@ void ui_text_box(uint8_t *fb, EpdRect box, int px, const char *text,
 
 void ui_text_fixed_ink_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                           enum EpdFontFlags align, uint8_t gray) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     if (!fb || !text || !*text || px <= 0) return;
     int above = 0, below = 0;
     uint8_t ink = ui_contrast_gray(gray) >> 4;
@@ -462,8 +506,42 @@ static bool title_uses_active_font(const char *sample) {
     return ttf_font_ready() && (!ttf_font_is_builtin() || ttf_font_has_text(sample));
 }
 
+static const char *title_codepoint(const char *text,char glyph[5]) {
+    unsigned n=1;
+    while(n<4 && text[n] && ((unsigned char)text[n]&0xc0)==0x80)++n;
+    memcpy(glyph,text,n);glyph[n]=0;
+    return text+n;
+}
+static bool title_ui_glyph(const char *glyph) {
+    return !ttf_font_has_text(glyph) && ui_font_has_text(glyph);
+}
+static bool title_needs_ui_glyphs(const char *sample) {
+    if(!sample || !title_uses_active_font(sample) || ttf_font_has_text(sample))return false;
+    while(*sample) {
+        char glyph[5];sample=title_codepoint(sample,glyph);
+        if(title_ui_glyph(glyph))return true;
+    }
+    return false;
+}
+static int title_native_px(int px,const char *sample) {
+    if(!title_uses_active_font(sample) && ui_font_has_text(sample))return ui_font_title_px(px,sample);
+    if(title_needs_ui_glyphs(sample))while(*sample) {
+        char glyph[5];sample=title_codepoint(sample,glyph);
+        if(title_ui_glyph(glyph)) {
+            int native=ui_font_title_px(px,glyph);
+            if(native<px)px=native;
+        }
+    }
+    return px;
+}
+
 void ui_text_fixed_context_aa_vc(uint8_t *fb,int x,int center_y,int px,const char *text,
                                const char *font_sample,enum EpdFontFlags align,uint8_t gray,uint8_t background) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if(!fb||!text||!*text||px<=0)return;
     int above=0,below=0;
     uint8_t ink=ui_contrast_gray(gray)>>4,back=ui_contrast_gray(background)>>4;
@@ -478,14 +556,33 @@ void ui_text_fixed_context_aa_vc(uint8_t *fb,int x,int center_y,int px,const cha
     }
 }
 
+int ui_text_title_width_px(int px, const char *text, const char *font_sample) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
+    if (!text || !*text) return 0;
+    const char *sample = font_sample ? font_sample : text;
+    if(title_needs_ui_glyphs(sample)) {
+        int width=0;
+        while(*text) {
+            char glyph[5];text=title_codepoint(text,glyph);
+            width+=title_ui_glyph(glyph)?ui_font_text_width_px(px,glyph):ttf_text_width_px(px,glyph);
+        }
+        return width;
+    }
+    return !title_uses_active_font(sample) && ui_font_has_text(sample) ?
+        ui_font_text_width_px(px, text) : ttf_text_width_px(px, text);
+}
+
 int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_sample) {
     const char *sample = font_sample ? font_sample : text;
-    bool builtin = !title_uses_active_font(sample) && ui_font_has_text(sample);
-    int px = builtin ? ui_font_title_px(preferred_px, sample) : preferred_px;
+    int px = title_native_px(preferred_px,sample);
     if (px < 12) px = 12;
     if (px > 120) px = 120;
     if (!text) return px;
-    while (*text && (builtin ? ui_font_text_width_px(px, text) : ttf_text_width_px(px, text)) > width) {
+    while (*text && ui_text_title_width_px(px,text,sample) > width) {
         size_t n = strlen(text) - 1;
         while (n && ((unsigned char)text[n] & 0xc0) == 0x80) --n;
         text[n] = 0;
@@ -495,10 +592,44 @@ int ui_text_title_fit(char *text, int preferred_px, int width, const char *font_
 
 void ui_text_title_background_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                                  const char *font_sample, enum EpdFontFlags align, uint8_t background) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     if (!fb || !text || !*text) return;
     int above = 0, below = 0;
     uint8_t back = background >> 4;
-    if (!title_uses_active_font(font_sample ? font_sample : text) &&
+    if(title_needs_ui_glyphs(font_sample?font_sample:text)) {
+        // Imported subset fonts can omit a common character (e.g. U+884C).
+        // Fill only missing glyphs; keep the selected face, one baseline and the
+        // same advances for measurement, alignment and drawing. No font reload.
+        const char *cursor=text;
+        while(*cursor) {
+            char glyph[5];cursor=title_codepoint(cursor,glyph);int a=0,b=0;
+            if(title_ui_glyph(glyph))ui_font_measure_line_px(px,glyph,&a,&b);
+            else ttf_measure_line_px(px,glyph,&a,&b);
+            if(a>above)above=a;
+            if(b>below)below=b;
+        }
+        int width=ui_text_title_width_px(px,text,font_sample?font_sample:text);
+        if(align&EPD_DRAW_ALIGN_CENTER)x-=width/2;
+        else if(align&EPD_DRAW_ALIGN_RIGHT)x-=width;
+        int baseline=center_y+(above-below)/2;
+        bool prior=ttf_get_antialias();ttf_set_antialias(true);
+        cursor=text;
+        while(*cursor) {
+            char glyph[5];cursor=title_codepoint(cursor,glyph);
+            if(title_ui_glyph(glyph)) {
+                ui_font_draw_text_px(fb,x,baseline,px,glyph,EPD_DRAW_ALIGN_LEFT,UI_INK_BLACK,back,false);
+                x+=ui_font_text_width_px(px,glyph);
+            } else {
+                ttf_draw_text_px(fb,x,baseline,px,glyph,EPD_DRAW_ALIGN_LEFT,UI_INK_BLACK,back);
+                x+=ttf_text_width_px(px,glyph);
+            }
+        }
+        ttf_set_antialias(prior);
+    } else if (!title_uses_active_font(font_sample ? font_sample : text) &&
         ui_font_has_text(font_sample ? font_sample : text)) {
         ui_font_measure_line_px(px, text, &above, &below);
         ui_font_draw_text_px(fb, x, center_y + (above - below) / 2, px, text, align,
@@ -514,6 +645,11 @@ void ui_text_title_background_vc(uint8_t *fb, int x, int center_y, int px, const
 
 void ui_text_title_vc(uint8_t *fb, int x, int center_y, int px, const char *text,
                       const char *font_sample, enum EpdFontFlags align) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+    font_sample=ui_tr(font_sample);
+#endif
+
     ui_text_title_background_vc(fb, x, center_y, px, text, font_sample, align, UI_GRAY_WHITE);
 }
 
@@ -521,6 +657,10 @@ void ui_text_bw(
     uint8_t* framebuffer, int x, int y_top, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     px = ui_text_effective_px(px);
     uint8_t fg = inverted ? UI_INK_WHITE : UI_INK_BLACK;
     uint8_t bg = inverted ? UI_INK_BLACK : UI_INK_WHITE;
@@ -533,6 +673,10 @@ void ui_text_vc(
     uint8_t* framebuffer, int x, int center_y, int px, const char* text,
     enum EpdFontFlags align, bool inverted
 ) {
+#ifdef KIIKO_UI_LOCALIZATION
+    text=ui_tr(text);
+#endif
+
     px = ui_text_effective_px(px);
     int above = 0;
     int below = 0;

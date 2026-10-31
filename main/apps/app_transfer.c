@@ -14,6 +14,7 @@
  * 用户验收要求停止后恢复进入传书前的页面或菜单位置；遗忘网络必须确认。
  * 用户要求联网后提供网址二维码；热点用单码切换连接/网页，网络变更清除旧码。
  * 卡失效时停止并汇合接收任务，清除旧容量与二维码；当前请求不得切换存储源。
+ * 用户修订：首次引导内复用配网页时由引导独占底部区域，不绘制主导航。
  * 配网列表与确认页底栏可切换主页面；密码页底部保留输入操作键，已连接的 STA 在离页后保活。
  * 正在上传时禁止主动切页；USB 退出必须先断开电脑再启动本机重新挂载。
  * Frozen: AP/STA transfer stops on exit while a provisioned connected STA stays online; deep sleep or power loss interrupts transfer.
@@ -30,6 +31,9 @@
  * Provisioning lists and confirmation keep the main tabs active; the password editor keeps its input actions, and connected STA persists after exit.
  * Navigation waits for an active upload; USB exit disconnects the host before local remount.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
@@ -39,6 +43,9 @@
 #include "book_progress.h"
 #include "book_title.h"
 #include "display.h"
+#if KIIKO_BOARD_METALIO47
+#include "display_main_waveform.h"
+#endif
 #include "e0470_epaper_waveform.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -55,14 +62,20 @@
 #include "ui_wifi_qr.h"
 #include "usb_storage.h"
 
+// 引导复用网络后端时不登记或绘制主页面底栏。/ Setup reuses networking without root-tab ink or hit registrations.
+static bool s_setup_chrome;
+void app_transfer_set_setup_chrome(bool active){s_setup_chrome=active;}
 static void transfer_navigation(uint8_t *fb,int active) {
-    ui_nav_draw(fb,active);
+    if(!s_setup_chrome)ui_nav_draw(fb,active);
 }
 
 static const char* TAG = "transfer_page";
 static book_store_root_t s_root;
 static read_pico_transfer_status_t s_status;
 static bool s_start_pending, s_settle, s_any_changed;
+#if KIIKO_BOARD_METALIO47
+static bool s_progress_pending;
+#endif
 static bool s_media_lost;
 static int s_pressed = -1;
 static read_pico_transfer_mode_t s_mode = READ_PICO_TRANSFER_MODE_AP;
@@ -362,7 +375,7 @@ static void draw_networks(uint8_t* fb) {
         fit_label(name, 28, 520);
         ui_text(fb, 64, rect.y + 16, 28, name, EPD_DRAW_ALIGN_LEFT, false);
         snprintf(detail, sizeof(detail), "%s · %s", network->rssi > -60 ? "信号强" : network->rssi > -75 ? "信号良好" : "信号一般",
-                 !network->supported ? "暂不支持" : network->requires_password ? "需要密码" : "开放网络");
+                 !network->supported ? "暂不支持" : network->saved ? (network->requires_password ? "已保存密码 · 可直连" : "已保存 · 可直连") : network->requires_password ? "需要密码" : "开放网络");
         ui_text(fb, 64, rect.y + 59, 21, detail, EPD_DRAW_ALIGN_LEFT, false);
         ui_text_vc(fb, 615, rect.y + 47, 27, "›", EPD_DRAW_ALIGN_CENTER, false);
     }
@@ -397,7 +410,7 @@ static void draw_password(uint8_t* fb) {
                        !s_password_visible, NULL);
     ui_text_fixed_vc(fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
     provisioning_button(fb, password_control_rect(44), "取消", 44);
-    provisioning_button(fb, password_control_rect(45), s_password_visible ? "隐藏" : "显示", 45);
+    provisioning_button(fb, password_control_rect(45), s_password_visible ? "隐藏" : "显示密码", 45);
     provisioning_button(fb, password_control_rect(46), "连接并保存", 46);
     ui_keyboard_draw(fb, UI_SYSTEM_KEYBOARD_TOP);
 }
@@ -543,6 +556,11 @@ static app_redraw_t provisioning_action(int id) {
                 snprintf(s_network_message, sizeof(s_network_message), "此网络认证暂不支持，请选择其他网络");
                 return APP_REDRAW_PAGE;
             }
+            if(s_selected.saved){
+                esp_err_t err=read_pico_transfer_select_saved_wifi(s_selected.ssid);
+                if(err==ESP_OK){queue_network_start(READ_PICO_TRANSFER_MODE_STA);return APP_REDRAW_PAGE;}
+                snprintf(s_network_message,sizeof(s_network_message),"保存的凭据暂不可用，请重新输入密码");
+            }
             if (!s_selected.requires_password) {
                 esp_err_t err = read_pico_transfer_save_wifi(s_selected.ssid, "");
                 if (err == ESP_OK) {
@@ -618,7 +636,7 @@ static app_redraw_t password_paint(app_ctx_t *ctx, bool field, bool controls) {
         ui_text_fixed_vc(ctx->fb, 36, 399, 22, s_network_message[0] ? s_network_message : "支持英文、数字、符号和空格", EPD_DRAW_ALIGN_LEFT, false);
         for (int i = 44; i <= 46; ++i) {
             EpdRect button = password_control_rect(i); ui_clear_rect_fast(ctx->fb, button);
-            provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隐藏" : "显示" : "连接并保存", i);
+            provisioning_button(ctx->fb, button, i == 44 ? "取消" : i == 45 ? s_password_visible ? "隐藏" : "显示密码" : "连接并保存", i);
         }
     }
     if (update.field || controls) update.area = update.area.width ? ui_rect_union(update.area, extra) : extra;
@@ -679,6 +697,13 @@ static app_redraw_t provisioning_gesture(app_ctx_t* ctx, const ui_gesture_event_
 }
 
 static EpdRect status_rect(void) { return (EpdRect){36, 676, 612, 270}; }
+#if KIIKO_BOARD_METALIO47
+// Only the live text and bar; exclude the card border, capacity and controls.
+static EpdRect progress_rect(void) {
+    EpdRect r = status_rect();
+    return (EpdRect){r.x + 24, r.y + 18, r.width - 48, 150};
+}
+#endif
 static uint64_t free_bytes(void* arg) { return book_store_free_bytes(arg); }
 
 static void draw_status(uint8_t* fb) {
@@ -827,6 +852,9 @@ static void render_content(app_ctx_t* ctx, uint8_t* fb) {
 }
 static void render(app_ctx_t *ctx,uint8_t *fb) {
     render_content(ctx,fb);
+#if KIIKO_BOARD_METALIO47
+    display_monochrome_content(fb);
+#endif
     transfer_navigation(fb,s_wifi_settings_only?3:2);
 }
 
@@ -858,6 +886,9 @@ static void on_enter(app_ctx_t* ctx) {
     s_session_started = false;
     s_pressed = -1;
     s_settle = s_any_changed = false;
+#if KIIKO_BOARD_METALIO47
+    s_progress_pending = false;
+#endif
     s_status.mode = s_mode;
     read_pico_transfer_get_saved_wifi(s_status.wifi_ssid, &s_status.wifi_configured);
     s_poll_ms = 0;
@@ -1038,13 +1069,32 @@ static app_redraw_t on_tick(app_ctx_t* ctx) {
     read_pico_transfer_service_poll();
     read_pico_transfer_status_t next = {0};
     read_pico_transfer_get_status(&next);
-    // 接收期间让屏幕保持静止，网页端显示实时进度；避免刷屏与写卡争用。
-    // Keep the panel still during reception; the browser owns live progress.
+#if KIIKO_BOARD_METALIO47
+    // At most one small DU difference every two seconds, including new files.
+    // Keep a failed scan pending so an unchanged receive snapshot can retry.
+    if (next.state == READ_PICO_TRANSFER_UPLOADING) {
+        bool changed = s_progress_pending || s_status.state != next.state ||
+            s_status.cur_bytes != next.cur_bytes || s_status.cur_total != next.cur_total ||
+            s_status.done_count != next.done_count || s_status.sta_count != next.sta_count ||
+            strcmp(s_status.cur_name, next.cur_name);
+        s_status = next;
+        s_settle = false;
+        if (!changed) return APP_REDRAW_NONE;
+        s_progress_pending = true;
+        draw_status(ctx->fb);
+        display_monochrome_content(ctx->fb);
+        s_area = progress_rect();
+        return APP_REDRAW_AREA;
+    }
+    s_progress_pending = false;
+#else
+    // Other boards retain their existing upload refresh policy.
     if (next.state == READ_PICO_TRANSFER_UPLOADING && s_status.state == READ_PICO_TRANSFER_UPLOADING) {
         s_status.cur_bytes = next.cur_bytes;
         s_status.sta_count = next.sta_count;
         return APP_REDRAW_NONE;
     }
+#endif
     if (s_status.state == READ_PICO_TRANSFER_ERROR && next.state == READ_PICO_TRANSFER_STOPPED) return APP_REDRAW_NONE;
     bool network_changed = next.network_ready != s_status.network_ready ||
         next.mode != s_status.mode || strcmp(next.ssid, s_status.ssid) ||
@@ -1203,6 +1253,15 @@ static app_redraw_t on_key(app_ctx_t *ctx, int key) {
 
 static bool present(app_ctx_t* ctx, app_redraw_t redraw) {
     if (redraw != APP_REDRAW_AREA) return false;
+#if KIIKO_BOARD_METALIO47
+    if (s_view == TRANSFER_HOME && s_progress_pending) {
+        int err = update_display_area_diff_with(ctx->hl,
+            display_main_bw_waveform(), MODE_DU, s_area);
+        guard_draw_result(ctx->hl, err);
+        if (!err) s_progress_pending = false;
+        return true;
+    }
+#endif
     if (s_view == TRANSFER_PASSWORD) {
         if (s_input_settle) {
             guard_draw_result(ctx->hl, update_display_area_full_with(ctx->hl, &E0470_WAVEFORM, MODE_GL16, s_area));

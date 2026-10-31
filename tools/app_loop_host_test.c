@@ -295,7 +295,19 @@ static app_redraw_t nav_return_tick(app_ctx_t* ctx) {
 }
 static void enter_with_pending_tab(app_ctx_t* ctx){enter(ctx);ctx->request_app=&second;}
 static app_redraw_t main_late_tick(app_ctx_t* ctx) {(void)ctx;return step == 1 ? response : APP_REDRAW_NONE;}
+// 文件目录结构切换不新增GC；显式全刷仍由原入口执行。/ File structural transitions add no GC; explicit full refresh keeps its original path.
+static bool child_view;
+static bool child_root(app_ctx_t *ctx){(void)ctx;return !child_view;}
+static app_redraw_t child_cycle(app_ctx_t *ctx){(void)ctx;child_view=!child_view;return APP_REDRAW_PAGE;}
 int main(void) {
+    for(int white=0;white<2;++white)for(int binary=0;binary<2;++binary){
+        reset();child_view=false;first.enter_full=true;first.persistent_navigation=true;
+        first.white_child_transition=white;first.binary_ui=binary;first.main_page_visible=child_root;first.on_tick=child_cycle;
+        for(int i=0;i<4;++i)add(0,0,0,0);
+        run();assert(fulls==(white?1:5));
+    }
+    puts("PASS: actual root/child dispatch uses white page updates without extra GC for opted-in file pages; other pages retain full cleanup");
+
     // 第一帧报点立即切页，尚未抬手也能响应；同次停留和释放不重复。
     // The first contact switches before lift; its subsequent hold and release never repeat navigation.
     for(int policy=0;policy<3;++policy) {
@@ -468,6 +480,8 @@ int main(void) {
     reset();media_test=sd_font=saved_sd_font=true;mounted_steps[0]=mounted_steps[2]=true;time_step=4000000;first.on_media_lost=lost;
     add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);add(0,0,0,0);run();
     assert(media_lost==2&&builtin_opens==2&&!probes&&font_opens==1);
+#if KIIKO_BOARD_METALIO47
+#else
     // 已通知页面并释放后台文件后才恢复；卡恢复一次通知页面并重新载入保存字体。
     // Recover only after loss callbacks and worker release; ready notifies once and reloads the saved font.
     reset();media_test=sd_font=saved_sd_font=auto_recovery_test=true;mounted_steps[0]=true;
@@ -489,6 +503,7 @@ int main(void) {
         if(guard==2)assert(!health_polls&&!media_lost);
     }
     puts("PASS: real loop media recovery joins consumers, restores font once, retries with backoff and respects upload/OTA/USB ownership");
+#endif
     reset();idle_minutes=1;time_step=60000000;first.on_before_lock=before_lock;
     add(0,0,0,0);add(0,0,0,0);run();
     assert(idle_locks==1&&before_locks==1&&wake_clean_requests==1); // Real scheduler flushes before automatic lock.
@@ -706,6 +721,7 @@ uint32_t ble_pt_input_serial(void){return 0;}
 
 void crash_note_log(void){}
 
+bool app_time_service_online_sync_pending(void) { return false; }
 void app_time_service_poll(bool idle) { (void)idle; }
 
 void ui_avatar_invalidate(void) {}
@@ -714,3 +730,6 @@ bool ui_avatar_quiesce(unsigned timeout){(void)timeout;return step>avatar_busy_u
 void book_lock_collage_invalidate(void) {}
 
 bool ble_pt_connected(void) { return false; }
+
+// 引导出口状态由独立setup测试覆盖；此组保持正常页面。/ Setup state is exercised separately; these fixtures use normal pages.
+bool app_setup_pending(void){return false;}

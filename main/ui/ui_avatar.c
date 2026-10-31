@@ -2,6 +2,9 @@
  * 中文：单个低优先级任务准备首页/设置头像，按代次发布两个有界小图；UI只拷贝结果。
  * English: One low-priority task prepares two bounded avatars, publishes by generation and never renders UI.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_avatar.h"
 #include "ui_wallpaper.h"
 #include "book_store.h"
@@ -61,9 +64,12 @@ void ui_avatar_request(const char *path,int side) {
     int slot=slot_for(side);
     if(slot<0)return;
     if(!path||!path[0]||strnlen(path,sizeof(s_path))>=sizeof(s_path)){ui_avatar_invalidate();return;}
+#if KIIKO_BOARD_METALIO47
+#else
     // 重挂时不能因切页重新启动TF头像任务；挂载完成后由原页面重新请求。
     // Navigation must not restart TF avatar I/O during remount; media-ready callbacks request it again.
     if(!strncmp(path,"/sdcard/",8)&&!read_pico_sd_io_ready())return;
+#endif
     // 路径切换仅释放小图，不 stat/fopen；缓存校验和解码都留给任务。
     // Path changes release thumbnails only; stat/open/cache checks and decoding stay in the worker.
     const unsigned revision=book_store_revision();

@@ -8,6 +8,9 @@
  * 冻结：不得覆盖当前运行分区，不在校验结束前切换启动分区。
  * Frozen: never overwrite the running partition or switch boot slots before validation completes.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ota_update.h"
 #include "kiiko_board_config.h"
 
@@ -86,7 +89,11 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
     esp_err_t err = read_candidate(file, &header, &candidate);
     fclose(file);
     if (err != ESP_OK) {
+#if KIIKO_BOARD_METALIO47
+        set_message(info->message, sizeof(info->message), "升级包不是有效的 Metalio S31 固件");
+#else
         set_message(info->message, sizeof(info->message), "升级包不是有效的 kiikoread 固件");
+#endif
         return err;
     }
 
@@ -96,7 +103,11 @@ esp_err_t pico_ota_inspect(const char *path, pico_ota_info_t *info) {
                     sizeof(running_desc->project_name)) ||
         !copy_field(candidate_project, sizeof(candidate_project), candidate.project_name,
                     sizeof(candidate.project_name)) || strcmp(current_project, candidate_project) != 0) {
+#if KIIKO_BOARD_METALIO47
+        set_message(info->message, sizeof(info->message), "升级包不属于当前 Metalio S31 固件");
+#else
         set_message(info->message, sizeof(info->message), "升级包不属于当前 kiikoread 固件");
+#endif
         return ESP_ERR_INVALID_RESPONSE;
     }
     if (!copy_field(info->candidate_version, sizeof(info->candidate_version), candidate.version,

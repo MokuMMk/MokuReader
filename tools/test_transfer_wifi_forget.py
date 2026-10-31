@@ -34,7 +34,8 @@ enum {READ_PICO_TRANSFER_STOPPED, READ_PICO_TRANSFER_STARTING, READ_PICO_TRANSFE
       READ_PICO_TRANSFER_UPLOADING, READ_PICO_TRANSFER_ERROR};
 typedef struct {int mode,state;bool wifi_configured;char wifi_ssid[33];} read_pico_transfer_status_t;
 static read_pico_transfer_status_t s_status;
-static bool s_wifi,s_started,s_config_busy;
+static bool s_wifi,s_started,s_config_busy,s_profile_confirmed;
+static int64_t s_profile_confirm_after;
 static bool cancel_time_sync(bool automatic_only){(void)automatic_only;return true;}
 static void *s_http,*s_netif;
 #define portENTER_CRITICAL(lock) ((void)0)
@@ -43,10 +44,10 @@ static void *s_http,*s_netif;
 '''
 harness += "\n".join(function(name) for name in (
     "read_pico_transfer_get_status", "claim_config", "release_config",
-    "publish_credentials", "read_pico_transfer_forget_wifi"))
+    "publish_credentials", "read_pico_transfer_select_saved_wifi", "read_pico_transfer_forget_wifi"))
 harness += r'''
 static void saved_network(int mode, int state) {
-    fail_open=fail_write=fail_commit=0;
+    fail_open=fail_write=fail_commit=0;memset(committed,0,sizeof(committed));
     s_wifi=s_started=s_config_busy=false;s_http=s_netif=NULL;
     s_status=(read_pico_transfer_status_t){.mode=mode,.state=state};
     transfer_credentials_t c;
@@ -56,23 +57,35 @@ static void saved_network(int mode, int state) {
 }
 int main(void) {
     policy_test();
+    saved_network(READ_PICO_TRANSFER_MODE_STA,READ_PICO_TRANSFER_STOPPED);
+    assert(read_pico_transfer_select_saved_wifi("saved")==ESP_ERR_INVALID_STATE);
+    assert(confirm_current_credentials()==ESP_OK);
+    transfer_credentials_t next;
+    assert(credentials_from_text("second","87654321",&next)&&store_credentials(&next)==ESP_OK&&confirm_current_credentials()==ESP_OK);publish_credentials(&next);
+    assert(read_pico_transfer_select_saved_wifi("saved")==ESP_OK&&!strcmp(s_status.wifi_ssid,"saved"));
+    assert(read_pico_transfer_forget_wifi()==ESP_OK&&!strcmp(s_status.wifi_ssid,"second")&&s_status.wifi_configured);
+    fail_commit=1;
+    assert(read_pico_transfer_select_saved_wifi("second")==ESP_FAIL&&!strcmp(s_status.wifi_ssid,"second"));fail_commit=0;
+    assert(read_pico_transfer_select_saved_wifi("missing")==ESP_ERR_NVS_NOT_FOUND&&!strcmp(s_status.wifi_ssid,"second"));
+    s_config_busy=true;assert(read_pico_transfer_select_saved_wifi("second")==ESP_ERR_INVALID_STATE);s_config_busy=false;
+    s_wifi=true;assert(read_pico_transfer_select_saved_wifi("second")==ESP_ERR_INVALID_STATE);s_wifi=false;
     // 已清理的失败连接可遗忘；NVS 提交失败保留配置与公开状态，下一次确认可重试。
     // A cleaned-up failed connection can be forgotten; failed commits retain credentials and allow retry.
     saved_network(READ_PICO_TRANSFER_MODE_STA, READ_PICO_TRANSFER_ERROR);
     fail_commit=1;
-    assert(read_pico_transfer_forget_wifi()==ESP_FAIL && present && s_status.wifi_configured);
+    assert(read_pico_transfer_forget_wifi()==ESP_FAIL && committed[1].present && s_status.wifi_configured);
     assert(!s_config_busy && !handles && !strcmp(s_status.wifi_ssid,"saved"));
     fail_commit=0;
-    assert(read_pico_transfer_forget_wifi()==ESP_OK && !present && !s_status.wifi_configured);
+    assert(read_pico_transfer_forget_wifi()==ESP_OK && !s_status.wifi_configured && !s_status.wifi_configured);
     assert(!s_config_busy && !handles && !s_status.wifi_ssid[0]);
     transfer_credentials_t check;
     assert(load_credentials(&check)==ESP_OK && !check.version);
     assert(read_pico_transfer_forget_wifi()==ESP_OK);
     saved_network(READ_PICO_TRANSFER_MODE_STA, READ_PICO_TRANSFER_ERROR);
     fail_open=1;
-    assert(read_pico_transfer_forget_wifi()==ESP_FAIL && present && s_status.wifi_configured);
+    assert(read_pico_transfer_forget_wifi()==ESP_FAIL && committed[1].present && s_status.wifi_configured);
     fail_open=0;s_config_busy=true;
-    assert(read_pico_transfer_forget_wifi()==ESP_ERR_INVALID_STATE && present);
+    assert(read_pico_transfer_forget_wifi()==ESP_ERR_INVALID_STATE && committed[1].present);
     s_config_busy=false;
     // 任一 STA 资源仍活跃都拒绝；热点遗忘只删保存的 STA，不中断热点。
     // Reject any live STA resource; forgetting saved STA credentials leaves an AP intact.
@@ -80,14 +93,14 @@ int main(void) {
         saved_network(READ_PICO_TRANSFER_MODE_STA, READ_PICO_TRANSFER_ERROR);
         if(resource==0)s_wifi=true;if(resource==1)s_started=true;
         if(resource==2)s_http=&s_status;if(resource==3)s_netif=&s_status;
-        assert(read_pico_transfer_forget_wifi()==ESP_ERR_INVALID_STATE && present);
+        assert(read_pico_transfer_forget_wifi()==ESP_ERR_INVALID_STATE && committed[1].present);
     }
     saved_network(READ_PICO_TRANSFER_MODE_AP, READ_PICO_TRANSFER_READY);
     s_wifi=s_started=true;s_http=s_netif=&s_status;
-    assert(read_pico_transfer_forget_wifi()==ESP_OK && !present && s_wifi && s_started && s_http && s_netif);
+    assert(read_pico_transfer_forget_wifi()==ESP_OK && !s_status.wifi_configured && s_wifi && s_started && s_http && s_netif);
     for(int mode=0;mode<2;++mode){
         saved_network(mode, READ_PICO_TRANSFER_UPLOADING);
-        assert(read_pico_transfer_forget_wifi()==ESP_ERR_INVALID_STATE && present);
+        assert(read_pico_transfer_forget_wifi()==ESP_ERR_INVALID_STATE && committed[1].present);
     }
     puts("transfer WiFi forget: failed-start recovery, persistence faults, busy/upload and resource guards PASS");
 }

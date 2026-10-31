@@ -2,6 +2,9 @@
  * SPDX-License-Identifier: Apache-2.0
  * Preserve the source on copy failure; never overwrite an existing target.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "file_tree.h"
 #include <dirent.h>
 #include <errno.h>
@@ -19,6 +22,14 @@
 #define TREE_DEPTH_MAX 8u
 #define TREE_NODES_MAX 1000u
 #define TREE_PATH_MAX 288u
+
+static int tree_stat(const char *path, struct stat *out) {
+#ifdef ESP_PLATFORM
+    return stat(path,out);
+#else
+    return lstat(path,out);
+#endif
+}
 
 static void *tree_buffer(size_t size) {
 #ifdef ESP_PLATFORM
@@ -43,7 +54,7 @@ static bool child_path(const char *parent, const char *name, char out[TREE_PATH_
 static esp_err_t inspect_at(const char *path, unsigned depth, file_tree_info_t *info) {
     if (depth > TREE_DEPTH_MAX || ++info->nodes > TREE_NODES_MAX) return ESP_ERR_INVALID_SIZE;
     struct stat st;
-    if (stat(path, &st)) return ESP_FAIL;
+    if (tree_stat(path, &st)) return ESP_FAIL;
     if (S_ISREG(st.st_mode)) {
         if (st.st_size < 0 || UINT64_MAX - info->bytes < (uint64_t)st.st_size) return ESP_ERR_INVALID_SIZE;
         info->bytes += (uint64_t)st.st_size;
@@ -77,7 +88,7 @@ static esp_err_t delete_at(const char *path, unsigned depth,
                            file_tree_deleted_cb_t callback, void *ctx) {
     if (depth > TREE_DEPTH_MAX) return ESP_ERR_INVALID_SIZE;
     struct stat st;
-    if (stat(path, &st)) return ESP_FAIL;
+    if (tree_stat(path, &st)) return ESP_FAIL;
     if (S_ISREG(st.st_mode)) {
         if (unlink(path)) return ESP_FAIL;
         if (callback) callback(path, false, ctx);
@@ -135,7 +146,7 @@ static esp_err_t copy_file(const char *source, const char *target) {
 static esp_err_t copy_at(const char *source, const char *target, unsigned depth) {
     if (depth > TREE_DEPTH_MAX) return ESP_ERR_INVALID_SIZE;
     struct stat st;
-    if (stat(source, &st)) return ESP_FAIL;
+    if (tree_stat(source, &st)) return ESP_FAIL;
     if (S_ISREG(st.st_mode)) return copy_file(source, target);
     if (!S_ISDIR(st.st_mode)) return ESP_ERR_NOT_SUPPORTED;
     if (mkdir(target, 0775)) return ESP_FAIL;
@@ -165,14 +176,14 @@ static esp_err_t target_available(const char *source, const char *target) {
         strlen(source) >= TREE_PATH_MAX || strlen(target) >= TREE_PATH_MAX ||
         !strcmp(source, target) || file_tree_same_or_below(target, source)) return ESP_ERR_INVALID_ARG;
     struct stat st;
-    if (!stat(target, &st)) return ESP_ERR_INVALID_STATE;
+    if (!tree_stat(target, &st)) return ESP_ERR_INVALID_STATE;
     if (errno != ENOENT) return ESP_FAIL;
     char parent[TREE_PATH_MAX];
     strcpy(parent, target);
     char *slash = strrchr(parent, '/');
     if (!slash || slash == parent) return ESP_ERR_INVALID_ARG;
     *slash = 0;
-    if (stat(parent, &st) || !S_ISDIR(st.st_mode)) return ESP_ERR_NOT_FOUND;
+    if (tree_stat(parent, &st) || !S_ISDIR(st.st_mode)) return ESP_ERR_NOT_FOUND;
     return ESP_OK;
 }
 
@@ -192,7 +203,7 @@ esp_err_t file_tree_move(const char *source, const char *target) {
     // A same-volume rename is atomic and needs no recursive traversal, even
     // for a large folder. The caller updates path-based metadata afterward.
     struct stat st;
-    if (stat(source, &st)) return ESP_ERR_NOT_FOUND;
+    if (tree_stat(source, &st)) return ESP_ERR_NOT_FOUND;
     if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode)) return ESP_ERR_NOT_SUPPORTED;
     return rename(source, target) ? ESP_FAIL : ESP_OK;
 }

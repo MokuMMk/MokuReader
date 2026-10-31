@@ -4,6 +4,9 @@
  * 编码手机可识别的WiFi二维码，缓存后纯绘制。/ Encode phone-compatible WiFi QR codes and cache for pure drawing.
  * 冻结：使用标准QR而非Data Matrix；不向日志输出载荷。/ Frozen: use standard QR, not Data Matrix; never log payloads.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_wifi_qr.h"
 #include <string.h>
 #include "qrcode.h"

@@ -83,11 +83,13 @@ unit += r'''
 enum {SHELF,BULK};
 static int s_view=SHELF;
 #define BOOK_GRID_ROWS 9
+#define BOOK_BULK_ROWS 5
 #define UI_MARGIN 36
 #define UI_GAP 20
 #define UI_BTN_H 60
 static int ui_content_width(void){return 612;}
 '''
+unit+=function('ui_book_manage_row',root/'main/ui/ui_book_manage_layout.h')+'\n'
 for name in ('shelf_rows','row_rect','shelf_cover_image'):
     unit += function(name,root/'main/apps/app_book.c')+'\n'
 unit += catalog + '\n' + count + '\n' + function('draw_style_thumbnail', source) + '\n'

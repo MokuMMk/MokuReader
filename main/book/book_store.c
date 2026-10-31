@@ -24,6 +24,7 @@
  */
 #include "book_store.h"
 #include "book_progress.h"
+#include "book_added.h"
 #include "settings.h"
 
 #include <errno.h>
@@ -228,5 +229,6 @@ esp_err_t book_store_delete(const char* path, bool* removed) {
         if (unlink(path) != 0 && errno != ENOENT) return ESP_FAIL;
     }
     *removed = true;
+    book_added_forget(path);
     return book_progress_forget(path);
 }

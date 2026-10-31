@@ -2,6 +2,9 @@
  * 中文：原比例封面、局部磨砂书夹与曲面短底座时钟；不保存整页或浮点画布。
  * English: Proportional covers, locally frosted folder and curved short-pedestal clock; never retain full pages or float canvases.
  */
+#ifdef ESP_PLATFORM
+#include "ui_locale_format.h"
+#endif
 #include "ui_home_widget.h"
 #include "ui_home_shapes.h"
 #include "ui_image_dither.h"

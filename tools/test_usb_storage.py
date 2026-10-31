@@ -17,6 +17,9 @@ STUB = r'''
 #include <stdlib.h>
 #include <assert.h>
 typedef int esp_err_t;
+static bool book_cover_jobs_quiesce(unsigned ms){assert(ms==2000);return true;}
+static bool ui_avatar_quiesce(unsigned ms){assert(ms==2000);return true;}
+static void book_lock_collage_invalidate(void){}
 #define ESP_OK 0
 #define ESP_FAIL -1
 #define ESP_ERR_INVALID_STATE 2
@@ -137,7 +140,8 @@ with tempfile.TemporaryDirectory() as d:
     (p/'usb_stub.h').write_text(STUB)
     for name in ('esp_err.h','driver/sdmmc_host.h','esp_log.h','esp_private/usb_phy.h',
                  'freertos/FreeRTOS.h','freertos/task.h','read_pico_sd.h','sdmmc_cmd.h',
-                 'tinyusb.h','tinyusb_default_config.h','tinyusb_msc.h','ttf_font.h'):
+                 'tinyusb.h','tinyusb_default_config.h','tinyusb_msc.h','ttf_font.h',
+                 'ui_avatar.h','book_cover_jobs.h','book_lock_collage.h'):
         header=p/name;header.parent.mkdir(parents=True,exist_ok=True);header.write_text('#include "usb_stub.h"\n')
     (p/'test.c').write_text(UNIT)
     subprocess.run(['cc','-std=c11','-Wall','-Wextra','-Werror','-g','-fsanitize=address,undefined',

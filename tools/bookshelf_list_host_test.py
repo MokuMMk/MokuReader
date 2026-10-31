@@ -61,6 +61,8 @@ static uint8_t ui_contrast_gray(uint8_t gray){return gray;}
  for n in ('_rotate','epd_draw_pixel','epd_get_pixel','epd_draw_hline','epd_draw_vline','epd_fill_rect','epd_draw_circle','epd_fill_circle_helper','epd_fill_circle','epd_write_line','epd_draw_line'):
   unit+=function(n,ROOT/'components/epdiy/src/epdiy.c')+'\n'
  for n in ('ui_rotate_rect_to_fb','ui_fill_rect_fast','ui_blit_mono_bitmap','clamp_radius','draw_arc','ui_draw_round_rect','ui_fill_round_rect','ui_inset_rect','ui_draw_control_frame','ui_draw_separator'):unit+=function(n,ROOT/'main/ui/ui_kit.c')+'\n'
+ unit+=function('ui_book_manage_row',ROOT/'main/ui/ui_book_manage_layout.h')+'\n'
+ unit+=function('ui_root_shadow',ROOT/'main/ui/ui_root_style.h')+'\n'
  unit+=function('pixel',ROOT/'main/ui/ui_pinpad.c')+'\n'
  unit+='typedef struct {unsigned x,y,width,height;} book_crop_t;\n'
  unit+=function('book_cover_crop',ROOT/'main/book/book_cover.c')+'\n'
@@ -85,6 +87,7 @@ static int s_visible_count=4;
 static int shelf_rows(void){return 4;}
 static int app_settings_shelf_style(void){return style;}
 static bool app_settings_main_fast_refresh(void){return false;}
+static void ui_acrylic_bw_rect(uint8_t *fb,EpdRect r){(void)fb;(void)r;assert(0);}
 static bool fast_cover_matches(int row,EpdRect r){(void)row;(void)r;return false;}
 static int ui_content_width(void){return 612;}
 #define UI_MARGIN 36
@@ -98,6 +101,7 @@ static void ui_hairline(uint8_t *fb,int y,int x,int w,uint8_t c){epd_draw_hline(
 static void copy_text(char *d,size_t n,const char *v){snprintf(d,n,"%s",v);}
 static void fit_text(char *v,int px,int w){while(*v&&ui_text_fixed_width_px(px,v)>w){size_t n=strlen(v)-1;while(n&&((unsigned char)v[n]&0xc0)==0x80)--n;v[n]=0;}}
 '''
+ unit+='#define FEEDBACK_SHADOW '+str(int('area.width += 2' in function('paint_list_cover_feedback',ROOT/'main/apps/app_book.c')))+'\n'
  for n in ('row_rect','shelf_cover_image','shelf_cover_frame_ready','draw_favorite_icon','draw_shelf_favorite_icon','cover_favorite_needs_white_edge','draw_shelf_cover','paint_list_cover_feedback','draw_list_title','draw_list_row'):
   unit+=function(n,ROOT/'main/apps/app_book.c')+'\n'
  unit+=r'''
@@ -125,7 +129,7 @@ int main(int argc,char **argv){
  // Actual pixels: bounce/settle touch only the cover union, keeping panel, text and separators.
  uint8_t *before=malloc(684*1216/2);assert(before);memcpy(before,fb,684*1216/2);
  s_pressed_control=i;EpdRect area=paint_list_cover_feedback(&ctx,i);
- assert(area.x==r.x&&area.y==r.y-8&&area.width==r.width&&area.height==r.height+8);
+ assert(area.x==r.x&&area.y==r.y-8&&area.width==r.width+(FEEDBACK_SHADOW?2:0)&&area.height==r.height+8+(FEEDBACK_SHADOW?6:0));
  assert(area.y>=184+i*197&&area.y+area.height<184+(i+1)*197);
  assert(((area.y&3)==(r.y&3)));
  for(int y=0;y<1216;++y)for(int x=0;x<684;++x)
