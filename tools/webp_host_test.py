@@ -88,7 +88,7 @@ def main() -> int:
         if not path.is_file():
             raise SystemExit(f'missing fixture: {path}')
 
-    common = ['cc', '-std=c11', '-Wall', '-Wextra', *SANITIZE, *local_flags()]
+    common = ['cc', '-std=c11', '-D_DEFAULT_SOURCE', '-Wall', '-Wextra', *SANITIZE, *local_flags()]
     with tempfile.TemporaryDirectory(prefix='kiiko-webp-host-') as directory:
         work = Path(directory)
         objects = []
